@@ -50,6 +50,7 @@
 #include <linux/kernel.h>
 #include <linux/sched/clock.h>
 #include <linux/tick.h>
+#include <linux/random.h>
 
 /*
  * The PULSE value is added to metrics when they grow and the DECAY_SHIFT value
@@ -63,6 +64,12 @@
  * the detection of wakeup patterns.
  */
 #define INTERVALS	8
+
+/*
+ * Percentage of the amount of weight to be shifted in the idle state weight
+ * distribution for correction
+ */
+#define LEARNING_RATE	5
 
 /**
  * struct teo_idle_state - Idle state data used by the TEO cpuidle governor.
@@ -98,6 +105,8 @@ struct teo_idle_state {
  * @states: Idle states data corresponding to this CPU.
  * @interval_idx: Index of the most recent saved idle interval.
  * @intervals: Saved idle duration values.
+ * @state_mat: Each idle state maintains a weights corresponding to that
+ * state, storing the probablity distribution of occurance for that state
  */
 struct teo_cpu {
 	u64 time_span_ns;
@@ -105,6 +114,7 @@ struct teo_cpu {
 	struct teo_idle_state states[CPUIDLE_STATE_MAX];
 	int interval_idx;
 	u64 intervals[INTERVALS];
+	int state_mat[CPUIDLE_STATE_MAX][CPUIDLE_STATE_MAX];
 };
 
 static DEFINE_PER_CPU(struct teo_cpu, teo_cpus);
@@ -117,7 +127,7 @@ static DEFINE_PER_CPU(struct teo_cpu, teo_cpus);
 static void teo_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 {
 	struct teo_cpu *cpu_data = per_cpu_ptr(&teo_cpus, dev->cpu);
-	int i, idx_hit = -1, idx_timer = -1;
+	int i, idx_hit = -1, idx_timer = -1, idx = -1, last_idx = dev->last_state_idx;
 	u64 measured_ns;
 
 	if (cpu_data->time_span_ns >= cpu_data->sleep_length_ns) {
@@ -183,14 +193,48 @@ static void teo_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 
 		if (idx_timer > idx_hit) {
 			misses += PULSE;
-			if (idx_hit >= 0)
+			idx = idx_timer;
+			if (idx_hit >= 0) {
 				cpu_data->states[idx_hit].early_hits += PULSE;
+				idx = idx_hit;
+			}
 		} else {
 			hits += PULSE;
+			idx = last_idx;
 		}
 
 		cpu_data->states[idx_timer].misses = misses;
 		cpu_data->states[idx_timer].hits = hits;
+	}
+
+	/*
+	 * Rearrange the weight distribution of the state, increase the weight
+	 * by the LEARNING RATE % for the idle state that was supposed to be
+	 * chosen and reduce by the same amount for rest of the states
+	 *
+	 * If the weights are greater than (100 - LEARNING_RATE) % or lesser
+	 * than LEARNING_RATE %, do not increase or decrease the confidence
+	 * respectively
+	 */
+	for (i = 0; i < drv->state_count; i++) {
+		unsigned int delta;
+
+		if (idx == -1)
+			break;
+		if (i ==  idx) {
+			delta = (LEARNING_RATE * cpu_data->state_mat[last_idx][i]) / 100;
+			if (cpu_data->state_mat[last_idx][i] + delta >=
+			    (100 - LEARNING_RATE) * 100)
+				continue;
+			cpu_data->state_mat[last_idx][i] += delta;
+			continue;
+		}
+		delta = (LEARNING_RATE * cpu_data->state_mat[last_idx][i]) /
+			((drv->state_count - 1) * 100);
+		if (cpu_data->state_mat[last_idx][i] - delta <=
+		    LEARNING_RATE * 100)
+			continue;
+		cpu_data->state_mat[last_idx][i] -= delta;
 	}
 
 	/*
@@ -244,7 +288,7 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 	s64 latency_req = cpuidle_governor_latency_req(dev->cpu);
 	u64 duration_ns;
 	unsigned int hits, misses, early_hits;
-	int max_early_idx, prev_max_early_idx, constraint_idx, idx, i;
+	int max_early_idx, prev_max_early_idx, constraint_idx, idx, i, og_idx;
 	ktime_t delta_tick;
 
 	if (dev->last_state_idx >= 0) {
@@ -374,10 +418,13 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 	if (constraint_idx < idx)
 		idx = constraint_idx;
 
+	og_idx = idx;
+
 	if (idx < 0) {
 		idx = 0; /* No states enabled. Must use 0. */
 	} else if (idx > 0) {
-		unsigned int count = 0;
+		unsigned int count = 0, sum_weights = 0, weights_list[CPUIDLE_STATE_MAX];
+		int i, j = 0, rnd_wt, rnd_num = 0;
 		u64 sum = 0;
 
 		/*
@@ -411,6 +458,29 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 					idx = teo_find_shallower_state(drv, dev,
 								       idx, avg_ns);
 			}
+		}
+		/*
+		 * In case, the recent history yields a shallower state, then
+		 * the probability distribution is looked at.
+		 * The weighted random number generator uses the weights as a
+		 * bias to choose the next idle state
+		 */
+		if (og_idx != idx) {
+			for (i = 0; i <= idx; i++) {
+				if (dev->states_usage[i].disable)
+					continue;
+				sum_weights += cpu_data->state_mat[idx][i];
+				weights_list[j++] = sum_weights;
+			}
+			get_random_bytes(&rnd_num, sizeof(rnd_num));
+			rnd_num = rnd_num % 100;
+			rnd_wt = (rnd_num * sum_weights) / 100;
+			for (i = 0; i < j; i++) {
+				if (rnd_wt < weights_list[i])
+					break;
+				rnd_wt -= weights_list[i];
+			}
+			idx = i;
 		}
 	}
 
@@ -468,13 +538,28 @@ static int teo_enable_device(struct cpuidle_driver *drv,
 			     struct cpuidle_device *dev)
 {
 	struct teo_cpu *cpu_data = per_cpu_ptr(&teo_cpus, dev->cpu);
-	int i;
+	int i, j;
 
 	memset(cpu_data, 0, sizeof(*cpu_data));
 
 	for (i = 0; i < INTERVALS; i++)
 		cpu_data->intervals[i] = U64_MAX;
 
+	/*
+	 * Populate initial weights for each state
+	 * The stop state is initially more biased for itself.
+	 *
+	 * Currently the initial distribution of probabilities are 70%-30%.
+	 * The trailing 0s are for increased resolution.
+	 */
+	for (i = 0; i < drv->state_count; i++) {
+		for (j = 0; j < drv->state_count; j++) {
+			if (i == j)
+				cpu_data->state_mat[i][j] = 7000;
+			else
+				cpu_data->state_mat[i][j] = 3000 / (drv->state_count - 1);
+		}
+	}
 	return 0;
 }
 
