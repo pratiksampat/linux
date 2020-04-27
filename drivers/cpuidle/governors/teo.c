@@ -69,7 +69,7 @@
  * Percentage of the amount of weight to be shifted in the idle state weight
  * distribution for correction
  */
-#define LEARNING_RATE	5
+#define LEARNING_RATE	10
 
 /**
  * struct teo_idle_state - Idle state data used by the TEO cpuidle governor.
@@ -424,7 +424,7 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 		idx = 0; /* No states enabled. Must use 0. */
 	} else if (idx > 0) {
 		unsigned int count = 0, sum_weights = 0, weights_list[CPUIDLE_STATE_MAX];
-		int i, j = 0, rnd_wt, rnd_num = 0;
+		unsigned int i, j = 0, rnd_wt, rnd_num = 0;
 		u64 sum = 0;
 
 		/*
@@ -478,7 +478,6 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 			for (i = 0; i < j; i++) {
 				if (rnd_wt < weights_list[i])
 					break;
-				rnd_wt -= weights_list[i];
 			}
 			idx = i;
 		}
@@ -555,9 +554,9 @@ static int teo_enable_device(struct cpuidle_driver *drv,
 	for (i = 0; i < drv->state_count; i++) {
 		for (j = 0; j < drv->state_count; j++) {
 			if (i == j)
-				cpu_data->state_mat[i][j] = 7000;
+				cpu_data->state_mat[i][j] = 6000;
 			else
-				cpu_data->state_mat[i][j] = 3000 / (drv->state_count - 1);
+				cpu_data->state_mat[i][j] = 4000 / (drv->state_count - 1);
 		}
 	}
 	return 0;
