@@ -475,11 +475,18 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 			get_random_bytes(&rnd_num, sizeof(rnd_num));
 			rnd_num = rnd_num % 100;
 			rnd_wt = (rnd_num * sum_weights) / 100;
+			for (i = 0; i <= idx; i++) {
+				trace_printk("CPU: %d wt_list[%d]: %d\n",
+					     dev->cpu, i, weights_list[i]);
+			}
+			trace_printk("CPU: %d Rnd_num: %d Rnd_wt: %d\n",
+				     dev->cpu, rnd_num, rnd_wt);
 			for (i = 0; i < j; i++) {
 				if (rnd_wt < weights_list[i])
 					break;
 			}
 			idx = i;
+			trace_printk("CPU: %d State chosen: %d\n", dev->cpu, idx);
 		}
 	}
 
