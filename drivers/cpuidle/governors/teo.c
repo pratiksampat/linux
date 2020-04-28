@@ -127,7 +127,8 @@ static DEFINE_PER_CPU(struct teo_cpu, teo_cpus);
 static void teo_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 {
 	struct teo_cpu *cpu_data = per_cpu_ptr(&teo_cpus, dev->cpu);
-	int i, idx_hit = -1, idx_timer = -1, idx = -1, last_idx = dev->last_state_idx;
+	int i, idx_hit = -1, idx_timer = -1, idx = -1, last_idx = dev->last_state_idx, max_idx = 0;
+	unsigned int idx_delta, last_idx_delta;
 	u64 measured_ns;
 
 	if (cpu_data->time_span_ns >= cpu_data->sleep_length_ns) {
@@ -166,6 +167,7 @@ static void teo_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 	 */
 	for (i = 0; i < drv->state_count; i++) {
 		unsigned int early_hits = cpu_data->states[i].early_hits;
+		int curr_state = cpu_data->state_mat[last_idx][i];
 
 		cpu_data->states[i].early_hits -= early_hits >> DECAY_SHIFT;
 
@@ -174,7 +176,10 @@ static void teo_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 			if (drv->states[i].target_residency_ns <= measured_ns)
 				idx_hit = i;
 		}
+		if (cpu_data->state_mat[last_idx][max_idx] <= curr_state)
+			max_idx = i;
 	}
+
 
 	/*
 	 * Update the "hits" and "misses" data for the state matching the sleep
@@ -207,6 +212,31 @@ static void teo_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 		cpu_data->states[idx_timer].hits = hits;
 	}
 
+	#define DECAY_RATE	5
+	/*
+	 * Decay the probability distribution
+	 * The state with max probability is reduced and the consequent states
+	 * are increased
+	*/
+	for (i = 0; i < drv->state_count; i++) {
+		unsigned int delta;
+		if (i == max_idx) {
+			delta = (DECAY_RATE * cpu_data->state_mat[last_idx][i]) / 100;
+			if (cpu_data->state_mat[last_idx][i] - delta <=
+			    DECAY_RATE * 100)
+				continue;
+			cpu_data->state_mat[last_idx][i] -= delta;
+			continue;
+		}
+		delta = (DECAY_RATE * cpu_data->state_mat[last_idx][i]) /
+			((drv->state_count - 1) * 100);
+		if (cpu_data->state_mat[last_idx][i] + delta >=
+		    (100 - DECAY_RATE) * 100)
+			continue;
+		cpu_data->state_mat[last_idx][i] += delta;
+	}
+
+#if 0
 	/*
 	 * Rearrange the weight distribution of the state, increase the weight
 	 * by the LEARNING RATE % for the idle state that was supposed to be
@@ -235,6 +265,19 @@ static void teo_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 		    LEARNING_RATE * 100)
 			continue;
 		cpu_data->state_mat[last_idx][i] -= delta;
+	}
+#endif
+	/*
+	 * Rearranging the weights. The idx increases in confidence and
+	 * dev->last_state_idx reduces in confidence by the LEARNING_RATE %
+	*/
+	idx_delta = (LEARNING_RATE * cpu_data->state_mat[last_idx][idx]) / 100;
+	last_idx_delta = (LEARNING_RATE * cpu_data->state_mat[last_idx][last_idx]) / 100;
+	if (idx != last_idx &&
+		cpu_data->state_mat[last_idx][idx] + idx_delta < (100 - LEARNING_RATE) * 100 &&
+		cpu_data->state_mat[last_idx][last_idx] - last_idx_delta > LEARNING_RATE * 100) {
+			cpu_data->state_mat[last_idx][idx] += idx_delta;
+			cpu_data->state_mat[last_idx][last_idx] -= last_idx_delta;
 	}
 
 	/*
@@ -423,10 +466,24 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 	if (idx < 0) {
 		idx = 0; /* No states enabled. Must use 0. */
 	} else if (idx > 0) {
+#if 0
 		unsigned int count = 0, sum_weights = 0, weights_list[CPUIDLE_STATE_MAX];
 		unsigned int i, j = 0, rnd_wt, rnd_num = 0;
 		u64 sum = 0;
+#endif
+		int i, max;
+		/*
+		 * Find the deepest state from the state matrix of the
+		 * highest probability
+		 */
+		max = 0;
+		for (i = 0; i <= idx; i++) {
+			if (cpu_data->state_mat[idx][max] < cpu_data->state_mat[idx][i])
+				max = i;
+		}
+		idx = max;
 
+#if 0
 		/*
 		 * Count and sum the most recent idle duration values less than
 		 * the current expected idle duration value.
@@ -488,6 +545,7 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 			idx = i;
 			trace_printk("CPU: %d State chosen: %d\n", dev->cpu, idx);
 		}
+#endif
 	}
 
 	/*
