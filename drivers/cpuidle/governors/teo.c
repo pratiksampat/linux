@@ -65,12 +65,6 @@
  */
 #define INTERVALS	8
 
-/*
- * Percentage of the amount of weight to be shifted in the idle state weight
- * distribution for correction
- */
-#define LEARNING_RATE	10
-
 /**
  * struct teo_idle_state - Idle state data used by the TEO cpuidle governor.
  * @early_hits: "Early" CPU wakeups "matching" this state.
@@ -127,8 +121,8 @@ static DEFINE_PER_CPU(struct teo_cpu, teo_cpus);
 static void teo_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 {
 	struct teo_cpu *cpu_data = per_cpu_ptr(&teo_cpus, dev->cpu);
+	int last_idx = dev->last_state_idx, delta = PULSE >> DECAY_SHIFT;
 	int i, idx_hit = -1, idx_timer = -1, idx = -1;
-	int last_idx = dev->last_state_idx;
 	u64 measured_ns;
 
 	if (cpu_data->time_span_ns >= cpu_data->sleep_length_ns) {
@@ -209,33 +203,19 @@ static void teo_update(struct cpuidle_driver *drv, struct cpuidle_device *dev)
 	}
 
 	/*
-	 * Rearrange the weight distribution of the state, increase the weight
-	 * by the LEARNING RATE % for the idle state that was supposed to be
-	 * chosen and reduce by the same amount for rest of the states
-	 *
-	 * If the weights are greater than (100 - LEARNING_RATE) % or lesser
-	 * than LEARNING_RATE %, do not increase or decrease the confidence
-	 * respectively
+	 * If it was a miss, increase the weight for the last idx and decrease
+	 * it for the wrong one.
+	 * Otherwise, increase the weight for the prediction
 	 */
-	for (i = 0; i < drv->state_count; i++) {
-		unsigned int delta;
-
-		if (idx == -1)
-			break;
-		if (i ==  idx) {
-			delta = (LEARNING_RATE * cpu_data->state_mat[last_idx][i]) / 100;
-			if (cpu_data->state_mat[last_idx][i] + delta >=
-			    (100 - LEARNING_RATE) * 100)
-				continue;
-			cpu_data->state_mat[last_idx][i] += delta;
-			continue;
+	if (idx != last_idx) {
+		if (cpu_data->state_mat[last_idx][idx] + delta < PULSE ||
+		    cpu_data->state_mat[last_idx][last_idx] - delta > 0) {
+			cpu_data->state_mat[last_idx][idx] += delta;
+			cpu_data->state_mat[last_idx][last_idx] -= delta;
 		}
-		delta = (LEARNING_RATE * cpu_data->state_mat[last_idx][i]) /
-			((drv->state_count - 1) * 100);
-		if (cpu_data->state_mat[last_idx][i] - delta <=
-		    LEARNING_RATE * 100)
-			continue;
-		cpu_data->state_mat[last_idx][i] -= delta;
+	} else {
+		if (cpu_data->state_mat[idx][idx] + delta < PULSE)
+			cpu_data->state_mat[idx][idx] += delta;
 	}
 
 	/*
@@ -548,17 +528,13 @@ static int teo_enable_device(struct cpuidle_driver *drv,
 
 	/*
 	 * Populate initial weights for each state
-	 * The stop state is initially more biased for itself.
-	 *
-	 * Currently the initial distribution of probabilities are 70%-30%.
-	 * The trailing 0s are for increased resolution.
+	 * The stop state is initially more biased for itself, while the other
+	 * states being zero
 	 */
 	for (i = 0; i < drv->state_count; i++) {
 		for (j = 0; j < drv->state_count; j++) {
 			if (i == j)
-				cpu_data->state_mat[i][j] = 6000;
-			else
-				cpu_data->state_mat[i][j] = 4000 / (drv->state_count - 1);
+				cpu_data->state_mat[i][j] = 1024;
 		}
 	}
 	return 0;
