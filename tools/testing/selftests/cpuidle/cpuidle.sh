@@ -7,19 +7,22 @@ MODULE=/lib/modules/$(uname -r)/kernel/drivers/cpuidle/test-cpuidle_latency.ko
 # Kselftest framework requirement - SKIP code is 4.
 ksft_skip=4
 
+SMT=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
+
 helpme()
 {
 	printf "Usage: $0 [-h] [-todg args]
 	[-h <help>]
 	[-m <location of the module>]
 	[-o <location of the output>]
+	[-v <verbose>]
 	\n"
 	exit 2
 }
 
 parse_arguments()
 {
-	while getopts ht:m:o: arg
+	while getopts ht:m:o:vt: arg
 	do
 		case $arg in
 			h) # --help
@@ -31,6 +34,9 @@ parse_arguments()
 			o) # output log files
 				LOG=$OPTARG
 				;;
+			v) # Verbose mode
+				SMT=1
+				;;
 			\?)
 				helpme
 				;;
@@ -40,15 +46,16 @@ parse_arguments()
 
 ins_mod()
 {
+	debugfs_file=/sys/kernel/debug/latency_test/ipi_latency_ns
+	# Check if the module is already loaded
+	if [ -f "$debugfs_file" ]; then
+		printf "Module already loaded\n\n"
+		return 0
+	fi
+	# Try to load the module
 	if [ ! -f "$MODULE" ]; then
 		printf "$MODULE module does not exist. Exitting\n"
 		exit $ksft_skip
-	fi
-	# Check if the module is already loaded
-	grep "test_cpuidle_latency" /proc/modules
-	if [ $? == 0 ]; then
-		printf "Module: $MODULE already loaded\n\n"
-		return 0
 	fi
 	printf "Inserting $MODULE module\n\n"
 	insmod $MODULE
@@ -120,6 +127,10 @@ cpuidle_disable_state()
 cpu_is_online()
 {
 	cpu=$1
+	if [ ! -f "/sys/devices/system/cpu/cpu$cpu/online" ]; then
+		echo 0
+		return
+	fi
 	status=$(cat /sys/devices/system/cpu/cpu$cpu/online)
 	echo $status
 }
@@ -166,7 +177,7 @@ run_ipi_tests()
 
 	echo -e "--Baseline IPI Latency measurement: CPU Busy--" >> $LOG
 	printf "%s %10s %12s\n" "SRC_CPU" "DEST_CPU" "IPI_Latency(ns)" >> $LOG
-	for ((cpu=0; cpu<NUM_CPUS; cpu++))
+	for ((cpu=0; cpu<NUM_CPUS; cpu+=SMT))
 	do
 		local cpu_status=$(cpu_is_online $cpu)
 		if [ $cpu_status == 0 ]; then
@@ -185,7 +196,7 @@ run_ipi_tests()
 		echo -e "---Enabling state: $state---" >> $LOG
 		cpuidle_enable_state $state
 		printf "%s %10s %12s\n" "SRC_CPU" "DEST_CPU" "IPI_Latency(ns)" >> $LOG
-		for ((cpu=0; cpu<NUM_CPUS; cpu++))
+		for ((cpu=0; cpu<NUM_CPUS; cpu+=SMT))
 		do
 			local cpu_status=$(cpu_is_online $cpu)
 			if [ $cpu_status == 0 ]; then
@@ -249,7 +260,7 @@ run_timeout_tests()
 
 	echo -e "--Baseline Timeout Latency measurement: CPU Busy--" >> $LOG
 	printf "%s %10s %10s\n" "Wakeup_src" "Baseline_delay(ns)">> $LOG
-	for ((cpu=0; cpu<NUM_CPUS; cpu++))
+	for ((cpu=0; cpu<NUM_CPUS; cpu+=SMT))
 	do
 		local cpu_status=$(cpu_is_online $cpu)
 		if [ $cpu_status == 0 ]; then
@@ -268,7 +279,7 @@ run_timeout_tests()
 		echo -e "---Enabling state: $state---" >> $LOG
 		cpuidle_enable_state $state
 		printf "%s %10s %10s\n" "Wakeup_src" "Baseline_delay(ns)" "Delay(ns)" >> $LOG
-		for ((cpu=0; cpu<NUM_CPUS; cpu++))
+		for ((cpu=0; cpu<NUM_CPUS; cpu+=SMT))
 		do
 			local cpu_status=$(cpu_is_online $cpu)
 			if [ $cpu_status == 0 ]; then
