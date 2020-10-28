@@ -266,7 +266,7 @@ run_timeout_tests()
 		if [ $cpu_status == 0 ]; then
 			continue
 		fi
-		timeout_test_once "baseline" $cpu ${residency_arr[0]}
+		timeout_test_once "baseline" $cpu 1000000
 		printf "%-3s %13s\n" $src_cpu $timeout_diff >> $LOG
 		avg_arr+=($timeout_diff)
 	done
@@ -285,7 +285,7 @@ run_timeout_tests()
 			if [ $cpu_status == 0 ]; then
 				continue
 			fi
-			timeout_test_once "test" $cpu ${residency_arr[$state]}
+			timeout_test_once "test" $cpu 1000000
 			printf "%-3s %13s %18s\n" $src_cpu $baseline_timeout_diff $timeout_diff >> $LOG
 			avg_arr+=($timeout_diff)
 		done
