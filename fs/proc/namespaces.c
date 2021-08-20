@@ -9,6 +9,7 @@
 #include <linux/ipc_namespace.h>
 #include <linux/pid_namespace.h>
 #include <linux/user_namespace.h>
+#include <linux/cpu_namespace.h>
 #include "internal.h"
 
 
@@ -37,6 +38,10 @@ static const struct proc_ns_operations *ns_entries[] = {
 	&timens_operations,
 	&timens_for_children_operations,
 #endif
+#ifdef CONFIG_CPU_NS
+	&cpuns_operations,
+#endif
+
 };
 
 static const char *proc_ns_get_link(struct dentry *dentry,

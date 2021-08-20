@@ -65,6 +65,7 @@
 #include <linux/mutex.h>
 #include <linux/cgroup.h>
 #include <linux/wait.h>
+#include <linux/cpu_namespace.h>
 
 DEFINE_STATIC_KEY_FALSE(cpusets_pre_enable_key);
 DEFINE_STATIC_KEY_FALSE(cpusets_enabled_key);
@@ -1059,10 +1060,22 @@ static void update_tasks_cpumask(struct cpuset *cs)
 {
 	struct css_task_iter it;
 	struct task_struct *task;
+#ifdef CONFIG_CPU_NS
+	cpumask_t temp;
+#endif
 
 	css_task_iter_start(&cs->css, 0, &it);
-	while ((task = css_task_iter_next(&it)))
+	while ((task = css_task_iter_next(&it))) {
+#ifdef CONFIG_CPU_NS
+		cpumask_copy(&task->nsproxy->cpu_ns->v_cpuset_cpus,
+			     cs->effective_cpus);
+		temp = get_pcpus_cpuns(current->nsproxy->cpu_ns,
+				       cs->effective_cpus);
+		set_cpus_allowed_ptr(task, &temp);
+#else
 		set_cpus_allowed_ptr(task, cs->effective_cpus);
+#endif
+	}
 	css_task_iter_end(&it);
 }
 
@@ -2193,6 +2206,9 @@ static void cpuset_attach(struct cgroup_taskset *tset)
 	struct cgroup_subsys_state *css;
 	struct cpuset *cs;
 	struct cpuset *oldcs = cpuset_attach_old_cs;
+#ifdef CONFIG_CPU_NS
+	cpumask_t temp;
+#endif
 
 	cgroup_taskset_first(tset, &css);
 	cs = css_cs(css);
@@ -2212,8 +2228,13 @@ static void cpuset_attach(struct cgroup_taskset *tset)
 		 * can_attach beforehand should guarantee that this doesn't
 		 * fail.  TODO: have a better way to handle failure here
 		 */
-		WARN_ON_ONCE(set_cpus_allowed_ptr(task, cpus_attach));
-
+#ifdef CONFIG_CPU_NS
+		cpumask_copy(&task->nsproxy->cpu_ns->v_cpuset_cpus, cpus_attach);
+		temp = get_pcpus_cpuns(current->nsproxy->cpu_ns, cpus_attach);
+		WARN_ON_ONCE(set_cpus_allowed_ptr(task, &temp));
+#else
+	WARN_ON_ONCE(set_cpus_allowed_ptr(task, cpus_attach));
+#endif
 		cpuset_change_task_nodemask(task, &cpuset_attach_nodemask_to);
 		cpuset_update_task_spread_flag(cs, task);
 	}
@@ -2436,13 +2457,33 @@ static int cpuset_common_seq_show(struct seq_file *sf, void *v)
 
 	switch (type) {
 	case FILE_CPULIST:
+#ifdef CONFIG_CPU_NS
+		if (current->nsproxy->cpu_ns == &init_cpu_ns) {
+			seq_printf(sf, "%*pbl\n",
+				   cpumask_pr_args(cs->cpus_allowed));
+		} else {
+			seq_printf(sf, "%*pbl\n",
+				   cpumask_pr_args(&current->nsproxy->cpu_ns->v_cpuset_cpus));
+		}
+#else
 		seq_printf(sf, "%*pbl\n", cpumask_pr_args(cs->cpus_allowed));
+#endif
 		break;
 	case FILE_MEMLIST:
 		seq_printf(sf, "%*pbl\n", nodemask_pr_args(&cs->mems_allowed));
 		break;
 	case FILE_EFFECTIVE_CPULIST:
+#ifdef CONFIG_CPU_NS
+		if (current->nsproxy->cpu_ns == &init_cpu_ns) {
+			seq_printf(sf, "%*pbl\n",
+				   cpumask_pr_args(cs->effective_cpus));
+		} else {
+			seq_printf(sf, "%*pbl\n",
+				   cpumask_pr_args(&current->nsproxy->cpu_ns->v_cpuset_cpus));
+		}
+#else
 		seq_printf(sf, "%*pbl\n", cpumask_pr_args(cs->effective_cpus));
+#endif
 		break;
 	case FILE_EFFECTIVE_MEMLIST:
 		seq_printf(sf, "%*pbl\n", nodemask_pr_args(&cs->effective_mems));
@@ -2884,9 +2925,19 @@ static void cpuset_bind(struct cgroup_subsys_state *root_css)
  */
 static void cpuset_fork(struct task_struct *task)
 {
+#ifdef CONFIG_CPU_NS
+	cpumask_t temp;
+#endif
+
 	if (task_css_is_root(task, cpuset_cgrp_id))
 		return;
-
+#ifdef CONFIG_CPU_NS
+	if (task->nsproxy->cpu_ns != &init_cpu_ns) {
+		temp = get_vcpus_cpuns(current->nsproxy->cpu_ns,
+				       current->cpus_ptr);
+		cpumask_copy(&current->nsproxy->cpu_ns->v_cpuset_cpus, &temp);
+	}
+#endif
 	set_cpus_allowed_ptr(task, current->cpus_ptr);
 	task->mems_allowed = current->mems_allowed;
 }
