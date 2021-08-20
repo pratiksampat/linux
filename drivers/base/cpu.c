@@ -20,6 +20,7 @@
 #include <linux/tick.h>
 #include <linux/pm_qos.h>
 #include <linux/sched/isolation.h>
+#include <linux/cpu_namespace.h>
 
 #include "base.h"
 
@@ -203,6 +204,21 @@ struct cpu_attr {
 	const struct cpumask *const map;
 };
 
+static ssize_t show_cpuns_cpus_attr(struct device *dev,
+			      struct device_attribute *attr,
+			      char *buf)
+{
+	struct cpu_attr *ca = container_of(attr, struct cpu_attr, attr);
+
+	if (current->nsproxy->cpu_ns == &init_cpu_ns)
+		return cpumap_print_to_pagebuf(true, buf, ca->map);
+
+	printk(KERN_DEBUG "[DEBUG] show_cpus_attr PID: %d mask: %*pbl\n",
+			current->pid,
+			cpumask_pr_args(&current->nsproxy->cpu_ns->v_cpuset_cpus));
+	return cpumap_print_to_pagebuf(true, buf, &current->nsproxy->cpu_ns->v_cpuset_cpus);
+}
+
 static ssize_t show_cpus_attr(struct device *dev,
 			      struct device_attribute *attr,
 			      char *buf)
@@ -215,10 +231,13 @@ static ssize_t show_cpus_attr(struct device *dev,
 #define _CPU_ATTR(name, map) \
 	{ __ATTR(name, 0444, show_cpus_attr, NULL), map }
 
+#define _CPU_CPUNS_ATTR(name, map) \
+	{ __ATTR(name, 0444, show_cpuns_cpus_attr, NULL), map }
+
 /* Keep in sync with cpu_subsys_attrs */
 static struct cpu_attr cpu_attrs[] = {
-	_CPU_ATTR(online, &__cpu_online_mask),
-	_CPU_ATTR(possible, &__cpu_possible_mask),
+	_CPU_CPUNS_ATTR(online, &__cpu_online_mask),
+	_CPU_CPUNS_ATTR(possible, &__cpu_possible_mask),
 	_CPU_ATTR(present, &__cpu_present_mask),
 };
 
@@ -244,7 +263,10 @@ static ssize_t print_cpus_offline(struct device *dev,
 	/* display offline cpus < nr_cpu_ids */
 	if (!alloc_cpumask_var(&offline, GFP_KERNEL))
 		return -ENOMEM;
-	cpumask_andnot(offline, cpu_possible_mask, cpu_online_mask);
+	if (current->nsproxy->cpu_ns == &init_cpu_ns)
+		cpumask_andnot(offline, cpu_possible_mask, cpu_online_mask);
+	else
+		cpumask_andnot(offline, cpu_possible_mask, &current->nsproxy->cpu_ns->v_cpuset_cpus);
 	len += sysfs_emit_at(buf, len, "%*pbl", cpumask_pr_args(offline));
 	free_cpumask_var(offline);
 
@@ -366,7 +388,7 @@ int register_cpu(struct cpu *cpu, int num)
 	cpu->dev.bus = &cpu_subsys;
 	cpu->dev.release = cpu_device_release;
 	cpu->dev.offline_disabled = !cpu->hotpluggable;
-	cpu->dev.offline = !cpu_online(num);
+	cpu->dev.offline = !cpu_online_cpu_ns(num);
 	cpu->dev.of_node = of_get_cpu_node(num, NULL);
 #ifdef CONFIG_GENERIC_CPU_AUTOPROBE
 	cpu->dev.bus->uevent = cpu_uevent;

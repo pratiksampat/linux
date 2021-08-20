@@ -16,6 +16,7 @@
 #include <linux/mnt_namespace.h>
 #include <linux/utsname.h>
 #include <linux/pid_namespace.h>
+#include <linux/cpu_namespace.h>
 #include <net/net_namespace.h>
 #include <linux/ipc_namespace.h>
 #include <linux/time_namespace.h>
@@ -47,6 +48,10 @@ struct nsproxy init_nsproxy = {
 	.time_ns		= &init_time_ns,
 	.time_ns_for_children	= &init_time_ns,
 #endif
+#ifdef CONFIG_CPU_NS
+	.cpu_ns			= &init_cpu_ns,
+	.cpu_ns_for_children	= &init_cpu_ns,
+#endif
 };
 
 static inline struct nsproxy *create_nsproxy(void)
@@ -70,6 +75,8 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 {
 	struct nsproxy *new_nsp;
 	int err;
+	int size;
+	int i;
 
 	new_nsp = create_nsproxy();
 	if (!new_nsp)
@@ -121,8 +128,25 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 	}
 	new_nsp->time_ns = get_time_ns(tsk->nsproxy->time_ns);
 
+	new_nsp->cpu_ns = copy_cpu_ns(flags, user_ns, tsk->nsproxy->cpu_ns);
+	if (IS_ERR(new_nsp->cpu_ns)) {
+		err = PTR_ERR(new_nsp->cpu_ns);
+		goto out_cpu;
+	}
+	printk(KERN_DEBUG "[DEBUG] nsproxy PID %d\n", tsk->pid);
+	size = num_possible_cpus();
+
+	for (i = 0; i < size; i++) {
+		printk(KERN_DEBUG "[DEBUG] TRANS CPU [%d] = %d\n", i, new_nsp->cpu_ns->trans_map[i]);
+	}
+
+	// TODO child cpu
+
 	return new_nsp;
 
+out_cpu:
+	if (new_nsp->cpu_ns)
+		put_cpu_ns(new_nsp->cpu_ns);
 out_time:
 	put_net(new_nsp->net_ns);
 out_net:
@@ -156,7 +180,7 @@ int copy_namespaces(unsigned long flags, struct task_struct *tsk)
 
 	if (likely(!(flags & (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
 			      CLONE_NEWPID | CLONE_NEWNET |
-			      CLONE_NEWCGROUP | CLONE_NEWTIME)))) {
+			      CLONE_NEWCGROUP | CLONE_NEWTIME | CLONE_NEWCPU)))) {
 		if (likely(old_ns->time_ns_for_children == old_ns->time_ns)) {
 			get_nsproxy(old_ns);
 			return 0;
@@ -216,7 +240,7 @@ int unshare_nsproxy_namespaces(unsigned long unshare_flags,
 
 	if (!(unshare_flags & (CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
 			       CLONE_NEWNET | CLONE_NEWPID | CLONE_NEWCGROUP |
-			       CLONE_NEWTIME)))
+			       CLONE_NEWTIME | CLONE_NEWCPU)))
 		return 0;
 
 	user_ns = new_cred ? new_cred->user_ns : current_user_ns();
@@ -289,7 +313,10 @@ static int check_setns_flags(unsigned long flags)
 	if (flags & CLONE_NEWTIME)
 		return -EINVAL;
 #endif
-
+#ifndef CONFIG_CPU_NS
+	if (flags & CLONE_NEWCPU)
+		return -EINVAL;
+#endif
 	return 0;
 }
 
@@ -466,6 +493,14 @@ static int validate_nsset(struct nsset *nsset, struct pid *pid)
 #ifdef CONFIG_TIME_NS
 	if (flags & CLONE_NEWTIME) {
 		ret = validate_ns(nsset, &nsp->time_ns->ns);
+		if (ret)
+			goto out;
+	}
+#endif
+
+#ifdef CONFIG_CPU_NS
+	if (flags & CLONE_NEWCPU) {
+		ret = validate_ns(nsset, &nsp->cpu_ns->ns);
 		if (ret)
 			goto out;
 	}
