@@ -7559,6 +7559,7 @@ out_unlock:
 long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 {
 	cpumask_var_t cpus_allowed, new_mask;
+	cpumask_t temp;
 	struct task_struct *p;
 	int retval;
 
@@ -7602,8 +7603,8 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 
 
 	cpuset_cpus_allowed(p, cpus_allowed);
-	get_pcpus_cpuns(current->nsproxy->cpu_ns, in_mask);
-	cpumask_and(new_mask, in_mask, cpus_allowed);
+	temp = get_pcpus_cpuns(current->nsproxy->cpu_ns, in_mask);
+	cpumask_and(new_mask, &temp, cpus_allowed);
 	printk(KERN_DEBUG "[DEBUG] sched_setaffinity new_mask: %*pbl",
 			cpumask_pr_args(new_mask));
 
@@ -7687,8 +7688,7 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 {
 	struct task_struct *p;
 	unsigned long flags;
-	int retval;
-	int cpu;
+	int retval, cpu;
 	cpumask_var_t temp;
 
 	rcu_read_lock();
@@ -7707,7 +7707,8 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 	cpumask_clear(temp);
 
 	for_each_cpu(cpu, mask) {
-		cpumask_set_cpu(current->nsproxy->cpu_ns->trans_map[cpu], temp);
+		cpumask_set_cpu(get_vcpu_cpuns(current->nsproxy->cpu_ns, cpu),
+				temp);
 	}
 
 	cpumask_copy(mask, temp);
@@ -9980,7 +9981,6 @@ static int cpu_cfs_quota_write_s64(struct cgroup_subsys_state *css,
 	css_task_iter_start(css, 0, &it);
 	while ((task = css_task_iter_next(&it))) {
 		period = ktime_to_ns(css_tg(css)->cfs_bandwidth.period);
-		// update_cpu_ns_cfs(task->nsproxy->cpu_ns, cfs_quota_us, period);
 	}
 	css_task_iter_end(&it);
 

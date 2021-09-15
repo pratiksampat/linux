@@ -40,7 +40,6 @@ static const struct proc_ns_operations *ns_entries[] = {
 #endif
 #ifdef CONFIG_CPU_NS
 	&cpuns_operations,
-	&cpuns_for_children_operations,
 #endif
 
 };

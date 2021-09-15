@@ -1218,8 +1218,9 @@ config CPU_NS
 	bool "CPU Namespaces"
 	default y
 	help
-	  Support CPU namespaces. This allows having a different view
-	  of the CPU topolgy in coherent with the limits set with cgroups.
+	  Support CPU namespaces. This allows having a context aware
+	  view of the CPU topology coherent to limits set in system
+	  control mechanism.
 
 endif # NAMESPACES
 

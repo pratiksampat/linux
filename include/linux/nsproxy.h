@@ -40,7 +40,6 @@ struct nsproxy {
 	struct time_namespace *time_ns_for_children;
 	struct cgroup_namespace *cgroup_ns;
 	struct cpu_namespace *cpu_ns;
-	struct cpu_namespace *cpu_ns_for_children;
 };
 extern struct nsproxy init_nsproxy;
 

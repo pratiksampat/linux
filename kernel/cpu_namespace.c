@@ -2,8 +2,7 @@
 /*
  * CPU namespaces
  *
- * Author:
- *    (C) 2021 Pratik Rajesh Sampat <psampat@linux.ibm.com>, IBM
+ * Author: Pratik Rajesh Sampat <psampat@linux.ibm.com>
 */
 
 #include <linux/cpu_namespace.h>
@@ -14,22 +13,10 @@
 #include <linux/err.h>
 #include <linux/random.h>
 
-static struct kmem_cache *cpu_ns_cachep;
-
 static void dec_cpu_namespaces(struct ucounts *ucounts)
 {
 	dec_ucount(ucounts, UCOUNT_CPU_NAMESPACES);
 }
-
-// static void delayed_free_cpuns(struct rcu_head *p)
-// {
-// 	struct cpu_namespace *ns = container_of(p, struct cpu_namespace, rcu);
-
-// 	dec_cpu_namespaces(ns->ucounts);
-// 	put_user_ns(ns->user_ns);
-
-// 	kmem_cache_free(cpu_ns_cachep, ns);
-// }
 
 static void destroy_cpu_namespace(struct cpu_namespace *ns)
 {
@@ -37,10 +24,6 @@ static void destroy_cpu_namespace(struct cpu_namespace *ns)
 
 	dec_cpu_namespaces(ns->ucounts);
 	put_user_ns(ns->user_ns);
-
-	kmem_cache_free(cpu_ns_cachep, ns);
-
-	// call_rcu(&ns->rcu, delayed_free_cpuns);
 }
 
 static struct ucounts *inc_cpu_namespaces(struct user_namespace *ns)
@@ -49,15 +32,17 @@ static struct ucounts *inc_cpu_namespaces(struct user_namespace *ns)
 }
 
 /*
- * Shuffle logic - https://benpfaff.org/writings/clc/shuffle.html
- * Copyright © 2004 Ben Pfaff.
+ * Shuffle
+ * Arrange the N elements of ARRAY in random order.
+ * Only effective if N is much smaller than RAND_MAX;
+ * if this may not be the case, use a better random
+ * number generator. -- Ben Pfaff.
 */
 #define RAND_MAX	32767
 void shuffle(int *array, size_t n)
 {
-	int i;
 	unsigned int rnd_num;
-	int j, t;
+	int i, j, t;
 
 	if (n <= 1)
 		return;
@@ -75,16 +60,12 @@ void shuffle(int *array, size_t n)
 static struct cpu_namespace *create_cpu_namespace(struct user_namespace *user_ns,
 	struct cpu_namespace *parent_cpu_ns)
 {
+	// struct task_struct *p = current;
 	struct cpu_namespace *ns;
 	struct ucounts *ucounts;
-	// int cpu_arr[200];
-	int *cpu_arr;
-	int err;
-	int cpu;
-	int n = 0;
-	int i;
-	struct task_struct *p = current;
+	int err, cpu, i, n = 0;
 	cpumask_t temp;
+	int *cpu_arr;
 
 	err = -EINVAL;
 	if (!in_userns(parent_cpu_ns->user_ns, user_ns))
@@ -95,51 +76,59 @@ static struct cpu_namespace *create_cpu_namespace(struct user_namespace *user_ns
 		goto out;
 
 	err = -ENOMEM;
-	ns = kmem_cache_zalloc(cpu_ns_cachep, GFP_KERNEL);
+	ns = kmalloc(sizeof(*ns), GFP_KERNEL);
 	if (ns == NULL)
 		goto out_dec;
 
 	err = ns_alloc_inum(&ns->ns);
 	if (err)
-		goto out_free_kmem_cache;
+		goto out_free_ns;
 	ns->ns.ops = &cpuns_operations;
 
 	refcount_set(&ns->ns.count, 1);
 	ns->parent = get_cpu_ns(parent_cpu_ns);
 	ns->user_ns = get_user_ns(user_ns);
-	cpumask_copy(&ns->v_cpuset_cpus, &parent_cpu_ns->v_cpuset_cpus);
-	memcpy (ns->trans_map, parent_cpu_ns->trans_map, sizeof(parent_cpu_ns->trans_map)); 
+	// cpumask_copy(&ns->v_cpuset_cpus, &parent_cpu_ns->v_cpuset_cpus);
+	// memcpy(ns->trans_map, parent_cpu_ns->trans_map,
+	//        sizeof(parent_cpu_ns->trans_map));
 
 	cpu_arr = kmalloc(sizeof(int) * num_possible_cpus(), GFP_KERNEL);
 	if (!cpu_arr)
-		goto out_free_kmem_cache;
+		goto out_free_ns;
 
-	for_each_present_cpu(cpu) {
+	for_each_possible_cpu(cpu) {
 		cpu_arr[n++] = cpu;
 	}
 
 	shuffle(cpu_arr, n);
 
-	cpumask_clear(&temp);
 	for (i = 0; i < n; i++) {
-		// printk(KERN_DEBUG "[DEBUG] CPU [%d] = %d\n", i, cpu_arr[i]);
-		ns->trans_map[i] = cpu_arr[i];
-		cpumask_set_cpu(cpu_arr[i], &temp);
+		ns->p_v_trans_map[i] = cpu_arr[i];
+		ns->v_p_trans_map[cpu_arr[i]] = i;
+		// cpumask_set_cpu(cpu_arr[i], &temp);
 	}
 
+	cpumask_clear(&temp);
+	cpumask_clear(&ns->v_cpuset_cpus);
 
-	printk(KERN_DEBUG "[DEBUG] CPU [%d] = %d\n", 0, ns->trans_map[0]);
+	for_each_cpu(i, &parent_cpu_ns->v_cpuset_cpus) {
+		cpumask_set_cpu(get_vcpu_cpuns(ns, get_pcpu_cpuns(ns, i)),
+				&ns->v_cpuset_cpus);
+	}
+	for_each_cpu(i, &ns->v_cpuset_cpus) {
+		cpumask_set_cpu(get_pcpu_cpuns(ns, i), &temp);
+	}
 
 	printk(KERN_DEBUG "[DEBUG] cpu namespace has been cloned\n");
-	printk(KERN_DEBUG "[DEBUG] PID %d\n", p->pid);
+	printk(KERN_DEBUG "[DEBUG] PID %d\n", current->pid);
 
-	do_set_cpus_allowed(p, &temp);
+	do_set_cpus_allowed(current, &temp);
 	kfree (cpu_arr);
 
 	return ns;
 
-out_free_kmem_cache:
-	kmem_cache_free(cpu_ns_cachep, ns);
+out_free_ns:
+	kfree(ns);
 out_dec:
 	dec_cpu_namespaces(ucounts);
 out:
@@ -189,23 +178,6 @@ static struct ns_common *cpuns_get(struct task_struct *task)
 	return ns ? &ns->ns : NULL;
 }
 
-static struct ns_common *cpuns_for_children_get(struct task_struct *task)
-{
-	struct cpu_namespace *ns = NULL;
-	struct nsproxy *nsproxy;
-
-	task_lock(task);
-	nsproxy = task->nsproxy;
-	if (nsproxy) {
-		ns = nsproxy->cpu_ns_for_children;
-		get_cpu_ns(ns);
-	}
-	task_unlock(task);
-
-	return ns ? &ns->ns : NULL;
-
-}
-
 static void cpuns_put(struct ns_common *ns)
 {
 	put_cpu_ns(to_cpu_ns(ns));
@@ -223,11 +195,6 @@ static int cpuns_install(struct nsset *nsset, struct ns_common *new)
 	get_cpu_ns(ns);
 	put_cpu_ns(nsproxy->cpu_ns);
 	nsproxy->cpu_ns = ns;
-
-	/* TOOD: CPU ns for children */
-	get_cpu_ns(ns);
-	put_cpu_ns(nsproxy->cpu_ns_for_children);
-	nsproxy->cpu_ns_for_children = ns;
 	return 0;
 }
 
@@ -236,12 +203,6 @@ static struct user_namespace *cpuns_owner(struct ns_common *ns)
 	return to_cpu_ns(ns)->user_ns;
 }
 
-// TODO
-// static struct ns_common *cpuns_get_parent(struct ns_common *ns)
-// {
-// 	return;
-// }
-
 const struct proc_ns_operations cpuns_operations = {
 	.name		= "cpu",
 	.type		= CLONE_NEWCPU,
@@ -249,20 +210,7 @@ const struct proc_ns_operations cpuns_operations = {
 	.put		= cpuns_put,
 	.install	= cpuns_install,
 	.owner		= cpuns_owner,
-	// .get_parent	= cpuns_get_parent,
 };
-
-const struct proc_ns_operations cpuns_for_children_operations = {
-	.name		= "cpu_for_children",
-	.real_ns_name	= "cpu",
-	.type		= CLONE_NEWCPU,
-	.get		= cpuns_for_children_get,
-	.put		= cpuns_put,
-	.install	= cpuns_install,
-	.owner		= cpuns_owner,
-	// .get_parent	= cpuns_get_parent,
-};
-
 
 struct cpu_namespace init_cpu_ns = {
 	.ns.count	= REFCOUNT_INIT(2),
@@ -276,16 +224,12 @@ static __init int cpu_namespaces_init(void)
 {
 	int cpu;
 
-	cpu_ns_cachep = KMEM_CACHE(cpu_namespace, SLAB_PANIC);
-
-	cpumask_copy(&init_cpu_ns.v_cpuset_cpus, cpu_present_mask);
-
+	cpumask_copy(&init_cpu_ns.v_cpuset_cpus, cpu_possible_mask);
 	/* Identity mapping for the cpu_namespace init */
 	for_each_present_cpu(cpu) {
-		init_cpu_ns.trans_map[cpu] = cpu;
+		init_cpu_ns.p_v_trans_map[cpu] = cpu;
+		init_cpu_ns.v_p_trans_map[cpu] = cpu;
 	}
-
-	printk(KERN_DEBUG "[DEBUG] cpu namespace has been initted\n");
 
 	return 0;
 }

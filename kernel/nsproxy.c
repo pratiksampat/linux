@@ -50,7 +50,6 @@ struct nsproxy init_nsproxy = {
 #endif
 #ifdef CONFIG_CPU_NS
 	.cpu_ns			= &init_cpu_ns,
-	.cpu_ns_for_children	= &init_cpu_ns,
 #endif
 };
 
@@ -137,10 +136,9 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 	size = num_possible_cpus();
 
 	for (i = 0; i < size; i++) {
-		printk(KERN_DEBUG "[DEBUG] TRANS CPU [%d] = %d\n", i, new_nsp->cpu_ns->trans_map[i]);
+		// printk(KERN_DEBUG "[DEBUG] TRANS CPU [%d] = %d\n", i, new_nsp->cpu_ns->trans_map[i]);
+		printk(KERN_DEBUG "[DEBUG] TRANS CPU [%d] = %d\n", i, get_vcpu_cpuns(new_nsp->cpu_ns, i));
 	}
-
-	// TODO child cpu
 
 	return new_nsp;
 

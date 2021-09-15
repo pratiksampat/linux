@@ -124,16 +124,18 @@ static int show_stat(struct seq_file *p, void *v)
 	/* shift boot timestamp according to the timens offset */
 	timens_sub_boottime(&boottime);
 
-	if (current->nsproxy->cpu_ns == &init_cpu_ns)
+	if (current->nsproxy->cpu_ns == &init_cpu_ns) {
 		cpumask_copy(cpu_mask, cpu_possible_mask);
-	else
-		cpumask_copy(cpu_mask, &current->nsproxy->cpu_ns->v_cpuset_cpus);
+	} else {
+		cpumask_copy(cpu_mask,
+			     &current->nsproxy->cpu_ns->v_cpuset_cpus);
+	}
 
 	for_each_cpu(i, cpu_mask) {
 		struct kernel_cpustat kcpustat;
 		u64 *cpustat = kcpustat.cpustat;
 
-		pcpu = get_pcpu_ns(current->nsproxy->cpu_ns, i);
+		pcpu = get_pcpu_cpuns(current->nsproxy->cpu_ns, i);
 		kcpustat_cpu_fetch(&kcpustat, pcpu);
 
 		user		+= cpustat[CPUTIME_USER];
@@ -170,16 +172,18 @@ static int show_stat(struct seq_file *p, void *v)
 	seq_put_decimal_ull(p, " ", nsec_to_clock_t(guest_nice));
 	seq_putc(p, '\n');
 
-	if (current->nsproxy->cpu_ns == &init_cpu_ns)
+	if (current->nsproxy->cpu_ns == &init_cpu_ns) {
 		cpumask_copy(cpu_mask, cpu_online_mask);
-	else
-		cpumask_copy(cpu_mask, &current->nsproxy->cpu_ns->v_cpuset_cpus);
+	} else {
+		cpumask_copy(cpu_mask,
+			     &current->nsproxy->cpu_ns->v_cpuset_cpus);
+	}
 
 	for_each_cpu(i, cpu_mask) {
 		struct kernel_cpustat kcpustat;
 		u64 *cpustat = kcpustat.cpustat;
 
-		pcpu = get_pcpu_ns(current->nsproxy->cpu_ns, i);
+		pcpu = get_pcpu_cpuns(current->nsproxy->cpu_ns, i);
 
 		kcpustat_cpu_fetch(&kcpustat, pcpu);
 
