@@ -20,6 +20,7 @@
 #include <linux/tick.h>
 #include <linux/pm_qos.h>
 #include <linux/sched/isolation.h>
+#include <linux/cpu_namespace.h>
 
 #include "base.h"
 
@@ -203,6 +204,24 @@ struct cpu_attr {
 	const struct cpumask *const map;
 };
 
+#ifdef CONFIG_CPU_NS
+static ssize_t show_cpuns_cpus_attr(struct device *dev,
+			      struct device_attribute *attr,
+			      char *buf)
+{
+	struct cpu_attr *ca = container_of(attr, struct cpu_attr, attr);
+
+	if (current->nsproxy->cpu_ns == &init_cpu_ns)
+		return cpumap_print_to_pagebuf(true, buf, ca->map);
+
+	return cpumap_print_to_pagebuf(true, buf,
+				       &current->nsproxy->cpu_ns->v_cpuset_cpus);
+}
+
+#define _CPU_CPUNS_ATTR(name, map) \
+	{ __ATTR(name, 0444, show_cpuns_cpus_attr, NULL), map }
+#endif
+
 static ssize_t show_cpus_attr(struct device *dev,
 			      struct device_attribute *attr,
 			      char *buf)
@@ -217,9 +236,14 @@ static ssize_t show_cpus_attr(struct device *dev,
 
 /* Keep in sync with cpu_subsys_attrs */
 static struct cpu_attr cpu_attrs[] = {
+#ifdef CONFIG_CPU_NS
+	_CPU_CPUNS_ATTR(online, &__cpu_online_mask),
+	_CPU_CPUNS_ATTR(present, &__cpu_present_mask),
+#else
 	_CPU_ATTR(online, &__cpu_online_mask),
-	_CPU_ATTR(possible, &__cpu_possible_mask),
 	_CPU_ATTR(present, &__cpu_present_mask),
+#endif
+	_CPU_ATTR(possible, &__cpu_possible_mask),
 };
 
 /*
@@ -244,7 +268,16 @@ static ssize_t print_cpus_offline(struct device *dev,
 	/* display offline cpus < nr_cpu_ids */
 	if (!alloc_cpumask_var(&offline, GFP_KERNEL))
 		return -ENOMEM;
+#ifdef CONFIG_CPU_NS
+	if (current->nsproxy->cpu_ns == &init_cpu_ns) {
+		cpumask_andnot(offline, cpu_possible_mask, cpu_online_mask);
+	} else {
+		cpumask_andnot(offline, cpu_possible_mask,
+			       &current->nsproxy->cpu_ns->v_cpuset_cpus);
+	}
+#else
 	cpumask_andnot(offline, cpu_possible_mask, cpu_online_mask);
+#endif
 	len += sysfs_emit_at(buf, len, "%*pbl", cpumask_pr_args(offline));
 	free_cpumask_var(offline);
 
