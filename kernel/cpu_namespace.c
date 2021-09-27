@@ -27,6 +27,33 @@ static void destroy_cpu_namespace(struct cpu_namespace *ns)
 	put_user_ns(ns->user_ns);
 }
 
+/*
+ * Shuffle
+ * Arrange the N elements of ARRAY in random order.
+ * Only effective if N is much smaller than RAND_MAX;
+ * if this may not be the case, use a better random
+ * number generator. -- Ben Pfaff.
+ */
+#define RAND_MAX	32767
+void shuffle(int *array, size_t n)
+{
+	unsigned int rnd_num;
+	int i, j, t;
+
+	if (n <= 1)
+		return;
+
+	for (i = 0; i < n-1; i++) {
+		get_random_bytes(&rnd_num, sizeof(rnd_num));
+		rnd_num = rnd_num % RAND_MAX;
+
+		j = i + rnd_num / (RAND_MAX / (n - i) + 1);
+		t = array[j];
+		array[j] = array[i];
+		array[i] = t;
+	}
+}
+
 static struct ucounts *inc_cpu_namespaces(struct user_namespace *ns)
 {
 	return inc_ucount(ns, current_euid(), UCOUNT_CPU_NAMESPACES);
@@ -37,8 +64,9 @@ static struct cpu_namespace *create_cpu_namespace(struct user_namespace *user_ns
 {
 	struct cpu_namespace *ns;
 	struct ucounts *ucounts;
-	int err, i, cpu;
+	int err, i, cpu, n = 0;
 	cpumask_t temp;
+	int *cpu_arr;
 
 	err = -EINVAL;
 	if (!in_userns(parent_cpu_ns->user_ns, user_ns))
@@ -62,10 +90,21 @@ static struct cpu_namespace *create_cpu_namespace(struct user_namespace *user_ns
 	ns->parent = get_cpu_ns(parent_cpu_ns);
 	ns->user_ns = get_user_ns(user_ns);
 
-	for_each_present_cpu(cpu) {
-		ns->p_v_trans_map[cpu] = ns->parent->p_v_trans_map[cpu];
-		ns->v_p_trans_map[cpu] = ns->parent->v_p_trans_map[cpu];
+	cpu_arr = kmalloc_array(num_possible_cpus(), sizeof(int), GFP_KERNEL);
+	if (!cpu_arr)
+		goto out_free_ns;
+
+	for_each_possible_cpu(cpu) {
+		cpu_arr[n++] = cpu;
 	}
+
+	shuffle(cpu_arr, n);
+
+	for (i = 0; i < n; i++) {
+		ns->p_v_trans_map[i] = cpu_arr[i];
+		ns->v_p_trans_map[cpu_arr[i]] = i;
+	}
+
 	cpumask_clear(&temp);
 	cpumask_clear(&ns->v_cpuset_cpus);
 
@@ -77,6 +116,8 @@ static struct cpu_namespace *create_cpu_namespace(struct user_namespace *user_ns
 		cpumask_set_cpu(get_pcpu_cpuns(ns, i), &temp);
 
 	set_cpus_allowed_ptr(current, &temp);
+
+	kfree(cpu_arr);
 
 	return ns;
 
