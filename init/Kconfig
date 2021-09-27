@@ -1214,6 +1214,14 @@ config NET_NS
 	  Allow user space to create what appear to be multiple instances
 	  of the network stack.
 
+config CPU_NS
+	bool "CPU Namespaces"
+	default y
+	help
+	  Support CPU namespaces. This allows having a context-aware
+	  scrambled view of the CPU topology coherent to limits set
+	  in system control mechanism.
+
 endif # NAMESPACES
 
 config CHECKPOINT_RESTORE

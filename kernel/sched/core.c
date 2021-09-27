@@ -27,6 +27,8 @@
 #include "pelt.h"
 #include "smp.h"
 
+#include <linux/cpu_namespace.h>
+
 /*
  * Export tracepoints that act as a bare tracehook (ie: have no trace event
  * associated with them) to allow external modules to probe them.
@@ -7559,6 +7561,7 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 {
 	cpumask_var_t cpus_allowed, new_mask;
 	struct task_struct *p;
+	cpumask_t temp;
 	int retval;
 
 	rcu_read_lock();
@@ -7601,7 +7604,8 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 
 
 	cpuset_cpus_allowed(p, cpus_allowed);
-	cpumask_and(new_mask, in_mask, cpus_allowed);
+	temp = get_pcpus_cpuns(current->nsproxy->cpu_ns, in_mask);
+	cpumask_and(new_mask, &temp, cpus_allowed);
 
 	/*
 	 * Since bandwidth control happens on root_domain basis,
@@ -7682,8 +7686,10 @@ SYSCALL_DEFINE3(sched_setaffinity, pid_t, pid, unsigned int, len,
 long sched_getaffinity(pid_t pid, struct cpumask *mask)
 {
 	struct task_struct *p;
+	cpumask_var_t temp;
 	unsigned long flags;
 	int retval;
+	int cpu;
 
 	rcu_read_lock();
 
@@ -7698,6 +7704,13 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
 	cpumask_and(mask, &p->cpus_mask, cpu_active_mask);
+	cpumask_clear(temp);
+	for_each_cpu(cpu, mask) {
+		cpumask_set_cpu(get_vcpu_cpuns(current->nsproxy->cpu_ns, cpu),
+				temp);
+	}
+
+	cpumask_copy(mask, temp);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
 out_unlock:
