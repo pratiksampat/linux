@@ -5376,6 +5376,24 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	throttled = !list_empty(&cfs_b->throttled_cfs_rq);
 	cfs_b->nr_periods += overrun;
 
+	/* Account for how much runtime is remaining here */
+	/*
+		Expectation:
+			If the task is not throttled this means it yeilded by
+			itself. This means that we except some runtime_remaining.
+			Therefore yeild time = quota - runtime_remaining
+
+			I think cfs_b->runtime should be the same as defined in
+			"__assign_cfs_rq_runtime" but let's see..?
+
+			If the task is throttled, then the runtime_remaining
+			should be 0
+	*/
+
+	trace_printk("Period: %llu Quota: %llu runtime: %llu runtime_remaining: %lld\n",
+		     cfs_b->period, cfs_b->quota,
+		     cfs_b->runtime, cfs_rq->runtime_remaining);
+
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
 
