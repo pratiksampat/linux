@@ -5390,9 +5390,9 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			should be 0
 	*/
 
-	trace_printk("Period: %llu Quota: %llu runtime: %llu idle: %d throttled: %d\n",
+	trace_printk("Period: %llu Quota: %llu runtime: %llu used: %llu idle: %d throttled: %d\n",
 		     cfs_b->period, cfs_b->quota,
-		     cfs_b->runtime, cfs_b->idle, throttled);
+		     cfs_b->runtime, cfs_b->quota - cfs_b->runtime, cfs_b->idle, throttled);
 
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
