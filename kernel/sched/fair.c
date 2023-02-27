@@ -5039,7 +5039,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			amount = min(cfs_b->runtime, min_amount);
 			cfs_b->runtime -= amount;
 			cfs_b->idle = 0;
-			cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
+			// cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
 			trace_printk("[ASSIGN] Last idle duration: %llu\n", cfs_b->idle_time);
 			// /* Reset idle_time_start */
 			// cfs_b->idle_time_start = ktime_get_ns();
@@ -5399,7 +5399,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		     cfs_b->runtime, cfs_b->quota - cfs_b->runtime,
 		     cfs_b->idle, throttled, cfs_b->idle_time);
 	/* Reset idle_time_start */
-	cfs_b->idle_time_start = ktime_get_ns();
+	// cfs_b->idle_time_start = ktime_get_ns();
 
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
@@ -5419,7 +5419,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		  Start the idle timer - We will discard it later
 		  if it wasn't above a threshold maybe
 		*/
-		cfs_b->idle_time_start = ktime_get_ns();
+		// cfs_b->idle_time_start = ktime_get_ns();
 		return 0;
 	}
 
@@ -5445,10 +5445,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	 * timer to remain active while there are any throttled entities.)
 	 */
 	cfs_b->idle = 0;
-	cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
-	trace_printk("[TIMER] Last idle duration: %llu\n", cfs_b->idle_time);
+	// cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
+	// trace_printk("[TIMER] Last idle duration: %llu\n", cfs_b->idle_time);
 	/* Reset idle_time_start */
-	cfs_b->idle_time_start = ktime_get_ns();
+	// cfs_b->idle_time_start = ktime_get_ns();
 	return 0;
 
 out_deactivate:
@@ -5688,8 +5688,12 @@ static enum hrtimer_restart sched_cfs_period_timer(struct hrtimer *timer)
 			count = 0;
 		}
 	}
-	if (idle)
+	if (idle) {
 		cfs_b->period_active = 0;
+
+		/* We are idle, start measuring until we are not */
+		cfs_b->idle_time_start = ktime_get_ns();
+	}
 	raw_spin_unlock_irqrestore(&cfs_b->lock, flags);
 
 	return idle ? HRTIMER_NORESTART : HRTIMER_RESTART;
@@ -5727,6 +5731,10 @@ void start_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 		return;
 
 	cfs_b->period_active = 1;
+	/* We are not idle anymore, take time diff */
+	cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
+	trace_printk("[start_cfs_bandwidth] Last idle duration: %llu\n", cfs_b->idle_time);
+
 	hrtimer_forward_now(&cfs_b->period_timer, cfs_b->period);
 	hrtimer_start_expires(&cfs_b->period_timer, HRTIMER_MODE_ABS_PINNED);
 }
