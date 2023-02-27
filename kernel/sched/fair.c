@@ -5041,8 +5041,8 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			cfs_b->idle = 0;
 			cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
 			trace_printk("[ASSIGN] Last idle duration: %llu\n", cfs_b->idle_time);
-			/* Reset idle_time_start */
-			cfs_b->idle_time_start = ktime_get_ns();
+			// /* Reset idle_time_start */
+			// cfs_b->idle_time_start = ktime_get_ns();
 		}
 	}
 
@@ -5398,6 +5398,8 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		     cfs_b->period, cfs_b->quota,
 		     cfs_b->runtime, cfs_b->quota - cfs_b->runtime,
 		     cfs_b->idle, throttled, cfs_b->idle_time);
+	/* Reset idle_time_start */
+	cfs_b->idle_time_start = ktime_get_ns();
 
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
