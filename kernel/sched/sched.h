@@ -347,6 +347,7 @@ struct cfs_bandwidth {
 	u64			runtime;
 	u64			burst;
 	u64			runtime_snap;
+	u64			idle_time_start;
 	s64			hierarchical_quota;
 
 	u8			idle;
@@ -362,6 +363,7 @@ struct cfs_bandwidth {
 	int			nr_burst;
 	u64			throttled_time;
 	u64			burst_time;
+	u64			idle_time;
 #endif
 };
 

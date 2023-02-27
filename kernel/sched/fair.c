@@ -5039,6 +5039,8 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			amount = min(cfs_b->runtime, min_amount);
 			cfs_b->runtime -= amount;
 			cfs_b->idle = 0;
+			cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
+			trace_printk("[ASSIGN] Last idle duration: %llu\n", cfs_b->idle_time);
 		}
 	}
 
@@ -5390,9 +5392,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			should be 0
 	*/
 
-	trace_printk("Period: %llu Quota: %llu runtime: %llu used: %llu idle: %d throttled: %d\n",
+	trace_printk("Period: %llu Quota: %llu runtime: %llu used: %llu idle: %d throttled: %d idle_time: %llu\n",
 		     cfs_b->period, cfs_b->quota,
-		     cfs_b->runtime, cfs_b->quota - cfs_b->runtime, cfs_b->idle, throttled);
+		     cfs_b->runtime, cfs_b->quota - cfs_b->runtime,
+		     cfs_b->idle, throttled, cfs_b->idle_time);
 
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
@@ -5407,6 +5410,12 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	if (!throttled) {
 		/* mark as potentially idle for the upcoming period */
 		cfs_b->idle = 1;
+
+		/*
+		  Start the idle timer - We will discard it later
+		  if it wasn't above a threshold maybe
+		*/
+		cfs_b->idle_time_start = ktime_get_ns();
 		return 0;
 	}
 
@@ -5432,6 +5441,8 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	 * timer to remain active while there are any throttled entities.)
 	 */
 	cfs_b->idle = 0;
+	cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
+	trace_printk("[TIMER] Last idle duration: %llu\n", cfs_b->idle_time);
 
 	return 0;
 
@@ -5686,6 +5697,8 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->quota = RUNTIME_INF;
 	cfs_b->period = ns_to_ktime(default_cfs_period());
 	cfs_b->burst = 0;
+	cfs_b->idle_time_start = 0;
+	cfs_b->idle_time = 0;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
