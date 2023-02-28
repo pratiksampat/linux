@@ -5012,7 +5012,7 @@ void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b)
 
 	cfs_b->runtime = min(cfs_b->runtime, cfs_b->quota + cfs_b->burst);
 	trace_printk("[REFILL] runtime: %llu\n", cfs_b->runtime);
-	cfs_b->idle_time_start = ktime_get_ns();
+	// cfs_b->idle_time_start = ktime_get_ns();
 	cfs_b->runtime_snap = cfs_b->runtime;
 }
 
@@ -5044,7 +5044,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			// cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
 			trace_printk("[ASSIGN] runtime: %llu idle_time: %llu\n", cfs_b->runtime, ktime_get_ns() - cfs_b->idle_time_start);
 			// /* Reset idle_time_start */
-			// cfs_b->idle_time_start = ktime_get_ns();
+			cfs_b->idle_time_start = ktime_get_ns();
 		}
 	}
 
