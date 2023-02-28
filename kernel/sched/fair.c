@@ -5011,6 +5011,7 @@ void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b)
 	}
 
 	cfs_b->runtime = min(cfs_b->runtime, cfs_b->quota + cfs_b->burst);
+	trace_printk("[REFILL] runtime: %llu\n", cfs_b->runtime);
 	cfs_b->runtime_snap = cfs_b->runtime;
 }
 
@@ -5040,7 +5041,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			cfs_b->runtime -= amount;
 			cfs_b->idle = 0;
 			// cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
-			trace_printk("[ASSIGN] Last runtime: %llu\n", cfs_b->runtime);
+			trace_printk("[ASSIGN] runtime: %llu\n", cfs_b->runtime);
 			// /* Reset idle_time_start */
 			// cfs_b->idle_time_start = ktime_get_ns();
 		}
@@ -5345,6 +5346,7 @@ static void distribute_cfs_runtime(struct cfs_bandwidth *cfs_b)
 		if (runtime > cfs_b->runtime)
 			runtime = cfs_b->runtime;
 		cfs_b->runtime -= runtime;
+		trace_printk("[DISTRIBUTE] runtime: %llu\n", cfs_b->runtime);
 		remaining = cfs_b->runtime;
 		raw_spin_unlock(&cfs_b->lock);
 
@@ -5516,6 +5518,7 @@ static void __return_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 	raw_spin_lock(&cfs_b->lock);
 	if (cfs_b->quota != RUNTIME_INF) {
 		cfs_b->runtime += slack_runtime;
+		trace_printk("[RETURN] runtime: %llu\n", cfs_b->runtime);
 
 		/* we are under rq->lock, defer unthrottling using a timer */
 		if (cfs_b->runtime > sched_cfs_bandwidth_slice() &&
