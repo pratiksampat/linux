@@ -5397,10 +5397,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			should be 0
 	*/
 
-	trace_printk("Period: %llu Quota: %llu runtime: %llu used: %llu idle: %d throttled: %d idle_time: %llu\n",
+	trace_printk("Period: %llu Quota: %llu runtime: %llu used: %llu idle: %d throttled: %d\n",
 		     cfs_b->period, cfs_b->quota,
 		     cfs_b->runtime, cfs_b->quota - cfs_b->runtime,
-		     cfs_b->idle, throttled, ktime_get_ns() - cfs_b->idle_time_start);
+		     cfs_b->idle, throttled);
 	/* Reset idle_time_start */
 	// cfs_b->idle_time_start = ktime_get_ns();
 
