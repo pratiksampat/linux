@@ -46,6 +46,15 @@
 /* How many pages do we try to swap or page in/out together? */
 int page_cluster;
 
+
+struct pagestat_list{
+	struct folio *folio;
+	// unsigned long paddr;
+	unsigned long usage;
+	struct list_head list;
+};
+LIST_HEAD(PAGESTAT_HEAD);
+
 /* Protecting only lru_rotate.fbatch which requires disabling interrupts */
 struct lru_rotate {
 	local_lock_t lock;
@@ -189,8 +198,25 @@ EXPORT_SYMBOL_GPL(get_kernel_pages);
 
 typedef void (*move_fn_t)(struct lruvec *lruvec, struct folio *folio);
 
+static void check_and_display_access(void)
+{
+	struct pagestat_list *temp_node = NULL, *cursor;
+
+	list_for_each_entry_safe(cursor, temp_node, &PAGESTAT_HEAD, list) {
+		int new_usage = cursor->usage;
+		int curr_usage = cursor->usage;
+		/* TODO: Get new usage - pagewalk */
+		if (new_usage > curr_usage) {
+			// trace_printk("[CHECK] pfn=0x%lx usage: %ld\n",
+			// 	     folio_pfn(cursor->folio), cursor->usage);
+			trace_mm_lru_usage(cursor->folio, cursor->usage);
+		}
+	}
+}
+
 static void lru_add_fn(struct lruvec *lruvec, struct folio *folio)
 {
+	struct pagestat_list *temp_node = NULL;
 	int was_unevictable = folio_test_clear_unevictable(folio);
 	long nr_pages = folio_nr_pages(folio);
 
@@ -226,8 +252,20 @@ static void lru_add_fn(struct lruvec *lruvec, struct folio *folio)
 	}
 
 	lruvec_add_folio(lruvec, folio);
-	if (folio_lru_list(folio) == 0 || folio_lru_list(folio) == 1)
+	if (folio_lru_list(folio) == 0 || folio_lru_list(folio) == 1) {
 		trace_mm_lru_insertion(folio);
+
+		/* Add to pagestat list */
+		temp_node = kmalloc(sizeof(struct pagestat_list), GFP_KERNEL);
+		// temp_node->paddr = folio_pfn(folio);
+		temp_node->folio = folio;
+		temp_node->usage = 0;
+		INIT_LIST_HEAD(&temp_node->list);
+
+		list_add_tail(&temp_node->list, &PAGESTAT_HEAD);
+	}
+
+	check_and_display_access();
 }
 
 static void folio_batch_move_lru(struct folio_batch *fbatch, move_fn_t move_fn)

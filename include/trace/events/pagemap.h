@@ -64,6 +64,40 @@ TRACE_EVENT(mm_lru_insertion,
 			__entry->nr_access)
 	);
 
+TRACE_EVENT(mm_lru_usage,
+
+	TP_PROTO(struct folio *folio, unsigned int usage),
+
+	TP_ARGS(folio, usage),
+
+	TP_STRUCT__entry(
+		__field(struct folio *,	folio	)
+		__field(unsigned long, page_addr)
+		__field(unsigned long,	pfn	)
+		__field(enum lru_list,	lru	)
+		__field(unsigned int, nr_access)
+		__field(unsigned long, usage)
+	),
+
+	TP_fast_assign(
+		__entry->folio	= folio;
+		__entry->page_addr = (unsigned long)(unsigned long)(folio);
+		__entry->pfn	= folio_pfn(folio);
+		__entry->lru	= folio_lru_list(folio);
+		__entry->nr_access = folio->page.nr_access;
+		__entry->usage	= usage;
+	),
+
+	/* Flag format is based on page-types.c formatting for pagemap */
+	TP_printk("folio=%p page=0x%lx pfn=0x%lx lru=%d nr_access=%d usage=%ld",
+			__entry->folio,
+			__entry->page_addr,
+			__entry->pfn,
+			__entry->lru,
+			__entry->nr_access,
+			__entry->usage)
+	);
+
 TRACE_EVENT(page_access,
 
 	TP_PROTO(struct folio *folio),
