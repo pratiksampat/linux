@@ -226,7 +226,8 @@ static void lru_add_fn(struct lruvec *lruvec, struct folio *folio)
 	}
 
 	lruvec_add_folio(lruvec, folio);
-	trace_mm_lru_insertion(folio);
+	if (folio_lru_list(folio) == 0 || folio_lru_list(folio) == 1)
+		trace_mm_lru_insertion(folio);
 }
 
 static void folio_batch_move_lru(struct folio_batch *fbatch, move_fn_t move_fn)
@@ -503,6 +504,11 @@ void folio_mark_accessed(struct folio *folio)
 	}
 	if (folio_test_idle(folio))
 		folio_clear_idle(folio);
+
+	folio->page.nr_access++;
+
+	if (folio_lru_list(folio) == 0 || folio_lru_list(folio) == 1)
+		trace_page_access(folio);
 }
 EXPORT_SYMBOL(folio_mark_accessed);
 
@@ -614,6 +620,7 @@ static void lru_deactivate_file_fn(struct lruvec *lruvec, struct folio *folio)
 		__count_memcg_events(lruvec_memcg(lruvec), PGDEACTIVATE,
 				     nr_pages);
 	}
+	trace_mm_lru_deactivate_file(folio);
 }
 
 static void lru_deactivate_fn(struct lruvec *lruvec, struct folio *folio)
@@ -629,6 +636,7 @@ static void lru_deactivate_fn(struct lruvec *lruvec, struct folio *folio)
 		__count_vm_events(PGDEACTIVATE, nr_pages);
 		__count_memcg_events(lruvec_memcg(lruvec), PGDEACTIVATE,
 				     nr_pages);
+		trace_mm_lru_deactivate(folio);
 	}
 }
 
@@ -652,6 +660,8 @@ static void lru_lazyfree_fn(struct lruvec *lruvec, struct folio *folio)
 		__count_vm_events(PGLAZYFREE, nr_pages);
 		__count_memcg_events(lruvec_memcg(lruvec), PGLAZYFREE,
 				     nr_pages);
+
+		trace_mm_lru_lazyfree(folio);
 	}
 }
 

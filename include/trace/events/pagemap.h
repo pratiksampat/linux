@@ -33,21 +33,26 @@ TRACE_EVENT(mm_lru_insertion,
 
 	TP_STRUCT__entry(
 		__field(struct folio *,	folio	)
+		__field(unsigned long, page_addr)
 		__field(unsigned long,	pfn	)
 		__field(enum lru_list,	lru	)
 		__field(unsigned long,	flags	)
+		__field(unsigned int, nr_access)
 	),
 
 	TP_fast_assign(
 		__entry->folio	= folio;
+		__entry->page_addr = (unsigned long)(unsigned long)(folio);
 		__entry->pfn	= folio_pfn(folio);
 		__entry->lru	= folio_lru_list(folio);
 		__entry->flags	= trace_pagemap_flags(folio);
+		__entry->nr_access = folio->page.nr_access;
 	),
 
 	/* Flag format is based on page-types.c formatting for pagemap */
-	TP_printk("folio=%p pfn=0x%lx lru=%d flags=%s%s%s%s%s%s",
+	TP_printk("folio=%p page=0x%lx pfn=0x%lx lru=%d flags=%s%s%s%s%s%s nr_access=%d",
 			__entry->folio,
+			__entry->page_addr,
 			__entry->pfn,
 			__entry->lru,
 			__entry->flags & PAGEMAP_MAPPED		? "M" : " ",
@@ -55,8 +60,41 @@ TRACE_EVENT(mm_lru_insertion,
 			__entry->flags & PAGEMAP_SWAPCACHE	? "s" : " ",
 			__entry->flags & PAGEMAP_SWAPBACKED	? "b" : " ",
 			__entry->flags & PAGEMAP_MAPPEDDISK	? "d" : " ",
-			__entry->flags & PAGEMAP_BUFFERS	? "B" : " ")
-);
+			__entry->flags & PAGEMAP_BUFFERS	? "B" : " ",
+			__entry->nr_access)
+	);
+
+TRACE_EVENT(page_access,
+
+	TP_PROTO(struct folio *folio),
+	TP_ARGS(folio),
+
+	TP_STRUCT__entry(
+		__field(struct folio *,	folio	)
+		__field(unsigned long, page_addr)
+		__field(unsigned long,	pfn	)
+		__field(unsigned int, nr_access)
+		__field(enum lru_list,	lru	)
+	),
+
+	TP_fast_assign(
+		__entry->folio	= folio;
+		__entry->page_addr = (unsigned long)(folio);
+		__entry->pfn	= folio_pfn(folio);
+		//__entry->nr_accesses	= 0;
+		__entry->nr_access = folio->page.nr_access;
+		__entry->lru	= folio_lru_list(folio);
+
+	),
+
+	/* Flag format is based on page-types.c formatting for pagemap */
+	TP_printk("folio=%p page=0x%lx pfn=0x%lx nr_access=%d lru=%d",
+			__entry->folio,
+			__entry->page_addr,
+			__entry->pfn,
+			__entry->nr_access,
+			__entry->lru)
+	);
 
 TRACE_EVENT(mm_lru_activate,
 
@@ -66,16 +104,86 @@ TRACE_EVENT(mm_lru_activate,
 
 	TP_STRUCT__entry(
 		__field(struct folio *,	folio	)
+		__field(unsigned long, page_addr)
 		__field(unsigned long,	pfn	)
 	),
 
 	TP_fast_assign(
 		__entry->folio	= folio;
+		__entry->page_addr = (unsigned long)folio_address(folio);
 		__entry->pfn	= folio_pfn(folio);
 	),
 
-	TP_printk("folio=%p pfn=0x%lx", __entry->folio, __entry->pfn)
+	TP_printk("folio=%p page=0x%lx pfn=0x%lx", __entry->folio, __entry->page_addr, __entry->pfn)
 );
+
+
+/* Deactivating folios and setting them up for reclaim */
+TRACE_EVENT(mm_lru_deactivate_file,
+
+	TP_PROTO(struct folio *folio),
+
+	TP_ARGS(folio),
+
+	TP_STRUCT__entry(
+		__field(struct folio *,	folio	 )
+		__field(unsigned long, page_addr )
+		__field(unsigned long,	pfn	 )
+	),
+
+	TP_fast_assign(
+		__entry->folio	= folio;
+		__entry->page_addr 	= (unsigned long)folio_address(folio);
+		__entry->pfn	= folio_pfn(folio);
+	),
+
+	TP_printk("folio=%p page=0x%lx pfn=0x%lx", __entry->folio, __entry->page_addr, __entry->pfn)
+);
+
+TRACE_EVENT(mm_lru_deactivate,
+
+	TP_PROTO(struct folio *folio),
+
+	TP_ARGS(folio),
+
+	TP_STRUCT__entry(
+		__field(struct folio *,	folio	 )
+		__field(unsigned long, page_addr )
+		__field(unsigned long,	pfn	 )
+	),
+
+	TP_fast_assign(
+		__entry->folio	= folio;
+		__entry->page_addr 	= (unsigned long)folio_address(folio);
+		__entry->pfn	= folio_pfn(folio);
+	),
+
+	TP_printk("folio=%p page=0x%lx pfn=0x%lx", __entry->folio, __entry->page_addr, __entry->pfn)
+);
+
+/* Lazy free for clean anon folios. This is to differentiate from dirty anon folios */
+
+TRACE_EVENT(mm_lru_lazyfree,
+
+	TP_PROTO(struct folio *folio),
+
+	TP_ARGS(folio),
+
+	TP_STRUCT__entry(
+		__field(struct folio *,	folio	 )
+		__field(unsigned long, page_addr )
+		__field(unsigned long,	pfn	 )
+	),
+
+	TP_fast_assign(
+		__entry->folio	= folio;
+		__entry->page_addr 	= (unsigned long)folio_address(folio);
+		__entry->pfn	= folio_pfn(folio);
+	),
+
+	TP_printk("folio=%p page=0x%lx pfn=0x%lx", __entry->folio, __entry->page_addr, __entry->pfn)
+);
+
 
 #endif /* _TRACE_PAGEMAP_H */
 
