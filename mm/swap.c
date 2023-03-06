@@ -37,6 +37,7 @@
 #include <linux/page_idle.h>
 #include <linux/local_lock.h>
 #include <linux/buffer_head.h>
+#include <linux/mmu_notifier.h>
 
 #include "internal.h"
 
@@ -198,15 +199,81 @@ EXPORT_SYMBOL_GPL(get_kernel_pages);
 
 typedef void (*move_fn_t)(struct lruvec *lruvec, struct folio *folio);
 
+struct check_result {
+	bool accessed;
+};
+
+static bool __check_young(struct folio *folio, struct vm_area_struct *vma,
+		unsigned long addr, void *arg)
+{
+	struct check_result *result = arg;
+	DEFINE_FOLIO_VMA_WALK(pvmw, folio, vma, addr, 0);
+
+	result->accessed = false;
+
+	while (page_vma_mapped_walk(&pvmw)) {
+		if (pvmw.pte) {
+			result->accessed = pte_young(*pvmw.pte) ||
+				!folio_test_idle(folio) ||
+				mmu_notifier_test_young(vma->vm_mm, addr);
+			if (result->accessed) {
+				page_vma_mapped_walk_done(&pvmw);
+				break;
+			}
+		}
+	}
+
+	/* If accessed, stop walking */
+	return !result->accessed;
+}
+
+static bool check_page_access(struct folio *folio) {
+	struct check_result result = {
+		.accessed = false,
+	};
+	bool need_lock;
+	struct rmap_walk_control rwc = {
+		.arg = &result,
+		.rmap_one = __check_young,
+		.anon_lock = folio_lock_anon_vma_read,
+	};
+
+	if (!folio_mapped(folio) || !folio_raw_mapping(folio)) {
+		if (folio_test_idle(folio))
+			result.accessed = false;
+		else
+			result.accessed = true;
+		folio_put(folio);
+		goto out;
+	}
+
+	need_lock = !folio_test_anon(folio) || folio_test_ksm(folio);
+	if (need_lock && !folio_trylock(folio)) {
+		folio_put(folio);
+		return false;
+	}
+
+	rmap_walk(folio, &rwc);
+
+	if (need_lock)
+		folio_unlock(folio);
+	folio_put(folio);
+
+out:
+	return result.accessed;
+}
+
 static void check_and_display_access(void)
 {
 	struct pagestat_list *temp_node = NULL, *cursor;
 
 	list_for_each_entry_safe(cursor, temp_node, &PAGESTAT_HEAD, list) {
-		int new_usage = cursor->usage;
-		int curr_usage = cursor->usage;
-		/* TODO: Get new usage - pagewalk */
-		if (new_usage > curr_usage) {
+		unsigned long curr_usage = cursor->usage;
+
+		if (check_page_access(cursor->folio))
+			cursor->usage++;
+
+		if (cursor->usage > curr_usage) {
 			// trace_printk("[CHECK] pfn=0x%lx usage: %ld\n",
 			// 	     folio_pfn(cursor->folio), cursor->usage);
 			trace_mm_lru_usage(cursor->folio, cursor->usage);
