@@ -339,6 +339,8 @@ struct rt_rq;
 
 extern struct list_head task_groups;
 
+#define NR_IDLE_HIST 50 /* TODO: Revist the history size */
+
 struct cfs_bandwidth {
 #ifdef CONFIG_CFS_BANDWIDTH
 	raw_spinlock_t		lock;
@@ -364,6 +366,8 @@ struct cfs_bandwidth {
 	u64			throttled_time;
 	u64			burst_time;
 	u64			idle_time;
+	int			__idle_idx;
+	u64			idle_time_hist[NR_IDLE_HIST];
 #endif
 };
 

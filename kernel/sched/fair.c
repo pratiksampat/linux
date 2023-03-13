@@ -52,6 +52,8 @@
 
 #include <linux/sched/cond_resched.h>
 
+#include <linux/sort.h>
+
 #include "sched.h"
 #include "stats.h"
 #include "autogroup.h"
@@ -5021,6 +5023,18 @@ static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
 	return &tg->cfs_bandwidth;
 }
 
+static int cmp_u64(const void *A, const void *B)
+{
+	const u64 *a = A, *b = B;
+
+	if (a < b)
+		return -1;
+	else if (a > b)
+		return 1;
+	else
+		return 0;
+}
+
 /* returns 0 on failure to allocate runtime */
 static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				   struct cfs_rq *cfs_rq, u64 target_runtime)
@@ -5043,6 +5057,21 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			cfs_b->idle = 0;
 			// cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
 			trace_printk("[ASSIGN] runtime: %llu idle_time: %llu\n", cfs_b->runtime, ktime_get_ns() - cfs_b->idle_time_start);
+
+			/* Add idle time to the history buffer */
+			cfs_b->idle_time_hist[cfs_b->__idle_idx++] = ktime_get_ns() - cfs_b->idle_time_start;
+
+			/* If the history is full, find the 95th percentile */
+			if (cfs_b->__idle_idx >= NR_IDLE_HIST) {
+				u64 percentile_idx = 0;
+
+				sort(cfs_b->idle_time_hist, NR_IDLE_HIST,  sizeof(u64), cmp_u64, NULL);
+				percentile_idx = DIV_ROUND_UP(95 * (NR_IDLE_HIST - 1), 100);
+				trace_printk("[95P idle_time]: %llu\n", cfs_b->idle_time_hist[percentile_idx]);
+				/* No need to clear the entire array, it will be overwritten anyways */
+				cfs_b->__idle_idx = 0;
+			}
+
 			// /* Reset idle_time_start */
 			cfs_b->idle_time_start = ktime_get_ns();
 		}
@@ -5712,6 +5741,7 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->burst = 0;
 	cfs_b->idle_time_start = 0;
 	cfs_b->idle_time = 0;
+	cfs_b->__idle_idx = 0;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
