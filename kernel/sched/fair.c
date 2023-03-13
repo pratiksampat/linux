@@ -5061,12 +5061,12 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			/* Add idle time to the history buffer */
 			cfs_b->idle_time_hist[cfs_b->__idle_idx++] = ktime_get_ns() - cfs_b->idle_time_start;
 
-			/* If the history is full, find the 95th percentile */
+			/* If the history is full, find the 99th percentile */
 			if (cfs_b->__idle_idx >= NR_IDLE_HIST) {
 				u64 percentile_idx = 0;
 
 				sort(cfs_b->idle_time_hist, NR_IDLE_HIST,  sizeof(u64), cmp_u64, NULL);
-				percentile_idx = DIV_ROUND_UP(95 * (NR_IDLE_HIST - 1), 100);
+				percentile_idx = DIV_ROUND_UP(99 * (NR_IDLE_HIST - 1), 100);
 				trace_printk("[95P idle_time]: %llu\n", cfs_b->idle_time_hist[percentile_idx]);
 				/* No need to clear the entire array, it will be overwritten anyways */
 				cfs_b->__idle_idx = 0;
