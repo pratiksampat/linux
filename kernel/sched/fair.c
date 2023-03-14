@@ -5039,7 +5039,7 @@ static int cmp_u64(const void *A, const void *B)
 static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				   struct cfs_rq *cfs_rq, u64 target_runtime)
 {
-	u64 min_amount, amount = 0;
+	u64 min_amount, amount = 0, curr_idle_time;
 
 	lockdep_assert_held(&cfs_b->lock);
 
@@ -5056,11 +5056,12 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			cfs_b->runtime -= amount;
 			cfs_b->idle = 0;
 			// cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
-			trace_printk("[ASSIGN] runtime: %llu idle_time: %llu\n", cfs_b->runtime, ktime_get_ns() - cfs_b->idle_time_start);
+			curr_idle_time = ktime_get_ns() - cfs_b->idle_time_start;
+			trace_printk("[ASSIGN] runtime: %llu idle_time: %llu\n", cfs_b->runtime, curr_idle_time);
 
 			/* Add idle time to the history buffer only if > 10 ms*/
-			if (ktime_get_ns() - cfs_b->idle_time_start > 10000000)
-				cfs_b->idle_time_hist[cfs_b->__idle_idx++] = ktime_get_ns() - cfs_b->idle_time_start;
+			if (curr_idle_time > 10000000)
+				cfs_b->idle_time_hist[cfs_b->__idle_idx++] = curr_idle_time;
 
 			/* If the history is full, find the 99th percentile */
 			if (cfs_b->__idle_idx >= NR_IDLE_HIST) {
@@ -5069,8 +5070,41 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				sort(cfs_b->idle_time_hist, NR_IDLE_HIST,  sizeof(u64), cmp_u64, NULL);
 				percentile_idx = DIV_ROUND_UP(99 * (NR_IDLE_HIST - 1), 100);
 				trace_printk("[95P idle_time]: %llu\n", cfs_b->idle_time_hist[percentile_idx]);
+
+				/* Store this new idle time to compare to later */
+				cfs_b->idle_time_99p = cfs_b->idle_time_hist[percentile_idx];
+
 				/* No need to clear the entire array, it will be overwritten anyways */
 				cfs_b->__idle_idx = 0;
+			}
+
+			/* If idleness identified, and curr idle time is ~= calculated idle time then,
+			   start measuring runtime until the next identified idle time arrives
+
+			   Have 5 ms wiggle room for noise.
+			*/
+			else if (cfs_b->idle_time_99p &&
+				(curr_idle_time > (cfs_b->idle_time_99p - 5000000) &&
+				curr_idle_time < (cfs_b->idle_time_99p + 5000000))) {
+
+					if (!cfs_b->calculated_runtime_start) {
+						/* Start measuring runtime from here */
+						cfs_b->calculated_runtime_start = ktime_get_ns();
+					}
+					/*
+					  If calculated_runtime_start is started,
+					  and the next idle has been identified,
+					  then record the runtime and reset it.
+
+					  Make sure to reduce the curr_idle_time
+					  from the new runtime
+					*/
+					else {
+						trace_printk("[Estimated runtime]: %llu\n",
+						     ktime_get_ns() - cfs_b->calculated_runtime_start - curr_idle_time);
+						cfs_b->calculated_runtime_start = 0;
+					}
+
 			}
 
 			// /* Reset idle_time_start */
@@ -5743,6 +5777,8 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->idle_time_start = 0;
 	cfs_b->idle_time = 0;
 	cfs_b->__idle_idx = 0;
+	cfs_b->calculated_runtime_start = 0;
+	cfs_b->idle_time_99p = 0;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
