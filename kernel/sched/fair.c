@@ -5100,8 +5100,10 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 					  from the new runtime
 					*/
 					else {
-						trace_printk("[Estimated runtime]: %llu\n",
-						     ktime_get_ns() - cfs_b->calculated_runtime_start - curr_idle_time);
+						if (ktime_get_ns() - cfs_b->calculated_runtime_start - curr_idle_time > cfs_b->period) {
+							trace_printk("[Estimated runtime]: %llu\n",
+								     ktime_get_ns() - cfs_b->calculated_runtime_start - curr_idle_time);
+						}
 						cfs_b->calculated_runtime_start = 0;
 					}
 
