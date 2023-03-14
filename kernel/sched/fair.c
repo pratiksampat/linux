@@ -5058,8 +5058,8 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			// cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
 			trace_printk("[ASSIGN] runtime: %llu idle_time: %llu\n", cfs_b->runtime, ktime_get_ns() - cfs_b->idle_time_start);
 
-			/* Add idle time to the history buffer only if > 5 ms*/
-			if (ktime_get_ns() - cfs_b->idle_time_start > 5000000)
+			/* Add idle time to the history buffer only if > 10 ms*/
+			if (ktime_get_ns() - cfs_b->idle_time_start > 10000000)
 				cfs_b->idle_time_hist[cfs_b->__idle_idx++] = ktime_get_ns() - cfs_b->idle_time_start;
 
 			/* If the history is full, find the 99th percentile */
