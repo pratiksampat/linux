@@ -5065,7 +5065,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 
 			/* If the history is full, find the 99th percentile */
 			if (cfs_b->__idle_idx >= NR_IDLE_HIST) {
-				u64 percentile_idx = 0;
+				int percentile_idx = 0;
 
 				sort(cfs_b->idle_time_hist, NR_IDLE_HIST,  sizeof(u64), cmp_u64, NULL);
 				percentile_idx = DIV_ROUND_UP(99 * (NR_IDLE_HIST - 1), 100);
@@ -5113,11 +5113,11 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 
 			/* If runtime history is full, find 99P */
 			if (cfs_b->__runtime_idx >= NR_RUNTIME_HIST) {
-				u64 percentile_idx = 0;
+				int percentile_idx = 0;
 
 				sort(cfs_b->runtime_hist, NR_RUNTIME_HIST,  sizeof(u64), cmp_u64, NULL);
-				percentile_idx = DIV_ROUND_UP(99 * (NR_IDLE_HIST - 1), 100);
-				trace_printk("[RUNTIME 99P idle_time]: %llu\n", cfs_b->runtime_hist[percentile_idx]);
+				percentile_idx = DIV_ROUND_UP(99 * (NR_RUNTIME_HIST - 1), 100);
+				trace_printk("[99P runtime]: %llu\n", cfs_b->runtime_hist[percentile_idx]);
 
 				/* No need to clear the entire array, it will be overwritten anyways */
 				cfs_b->__runtime_idx = 0;
