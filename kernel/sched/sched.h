@@ -339,7 +339,8 @@ struct rt_rq;
 
 extern struct list_head task_groups;
 
-#define NR_IDLE_HIST 200 /* TODO: Revist the history size */
+#define NR_IDLE_HIST		200 /* TODO: Revist the history size */
+#define NR_RUNTIME_HIST		10 /* TODO: Revist the history size */
 
 struct cfs_bandwidth {
 #ifdef CONFIG_CFS_BANDWIDTH
@@ -369,6 +370,8 @@ struct cfs_bandwidth {
 	u64			idle_time;
 	int			__idle_idx;
 	u64			idle_time_hist[NR_IDLE_HIST];
+	u64			__runtime_idx;
+	u64			runtime_hist[NR_RUNTIME_HIST];
 	u64			idle_time_99p;
 #endif
 };

@@ -5100,14 +5100,29 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 					  from the new runtime
 					*/
 					else {
-						if (ktime_get_ns() - cfs_b->calculated_runtime_start - curr_idle_time < cfs_b->period) {
-							trace_printk("[Estimated runtime]: %llu\n",
-								     ktime_get_ns() - cfs_b->calculated_runtime_start - curr_idle_time);
+						u64 curr_runtime = ktime_get_ns() - cfs_b->calculated_runtime_start - curr_idle_time;
+
+						if (curr_runtime < cfs_b->period) {
+							trace_printk("[Estimated runtime]: %llu\n", curr_runtime);
+							cfs_b->runtime_hist[__runtime_idx++] = curr_runtime;
 						}
 						cfs_b->calculated_runtime_start = 0;
 					}
 
 			}
+
+			/* If runtime history is full, find 99P */
+			if (cfs_b->__runtime_idx >= NR_RUNTIME_HIST) {
+				u64 percentile_idx = 0;
+
+				sort(cfs_b->runtime_hist, NR_RUNTIME_HIST,  sizeof(u64), cmp_u64, NULL);
+				percentile_idx = DIV_ROUND_UP(99 * (NR_IDLE_HIST - 1), 100);
+				trace_printk("[RUNTIME 99P idle_time]: %llu\n", cfs_b->runtime_hist[percentile_idx]);
+
+				/* No need to clear the entire array, it will be overwritten anyways */
+				cfs_b->__runtime_idx = 0;
+			}
+
 
 			// /* Reset idle_time_start */
 			cfs_b->idle_time_start = ktime_get_ns();
@@ -5781,6 +5796,7 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->__idle_idx = 0;
 	cfs_b->calculated_runtime_start = 0;
 	cfs_b->idle_time_99p = 0;
+	cfs_b->__runtime_idx = 0;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
