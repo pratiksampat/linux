@@ -370,7 +370,7 @@ struct cfs_bandwidth {
 	u64			idle_time;
 	int			__idle_idx;
 	u64			idle_time_hist[NR_IDLE_HIST];
-	u64			__runtime_idx;
+	int			__runtime_idx;
 	u64			runtime_hist[NR_RUNTIME_HIST];
 	u64			idle_time_99p;
 #endif
