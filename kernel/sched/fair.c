@@ -5056,7 +5056,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			cfs_b->runtime -= amount;
 			cfs_b->idle = 0;
 			// cfs_b->idle_time = ktime_get_ns() - cfs_b->idle_time_start;
-			curr_idle_time = ktime_get_ns() - cfs_b->idle_time_start;
+			curr_idle_time = ktime_get_ns() - cfs_b->idle_time_start - amount;
 			trace_printk("[ASSIGN] runtime: %llu idle_time: %llu\n", cfs_b->runtime, curr_idle_time);
 
 			/* Add idle time to the history buffer only if > 10 ms*/
