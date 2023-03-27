@@ -5023,25 +5023,54 @@ static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
 static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				   struct cfs_rq *cfs_rq, u64 target_runtime)
 {
-	u64 min_amount, amount = 0;
+	u64 min_amount, amount = 0, curr_idle_time = 0;
+	s64 diff = 0;
 
 	lockdep_assert_held(&cfs_b->lock);
 
 	/* note: this is a positive sum as runtime_remaining <= 0 */
 	min_amount = target_runtime - cfs_rq->runtime_remaining;
 
-	if (cfs_b->quota == RUNTIME_INF)
+	if (cfs_b->quota == RUNTIME_INF) {
 		amount = min_amount;
-	else {
-		start_cfs_bandwidth(cfs_b);
-
-		if (cfs_b->runtime > 0) {
-			amount = min(cfs_b->runtime, min_amount);
-			cfs_b->runtime -= amount;
-			cfs_b->idle = 0;
-		}
+		goto assign_out;
 	}
 
+	start_cfs_bandwidth(cfs_b);
+	if (cfs_b->runtime <= 0)
+		goto assign_out;
+
+	amount = min(cfs_b->runtime, min_amount);
+	cfs_b->runtime -= amount;
+	cfs_b->idle = 0;
+
+	if (cfs_b->idle_time_start) {
+		curr_idle_time = ktime_get_ns() - cfs_b->idle_time_start;
+	}
+
+	/*
+	  When to account for idle time?
+	  When idle time exists and the idle time calcuated is
+	  signifcantly greater (5ms) than the amount that it had
+	  sought to run.
+
+	  Why 5 ms buffer? - The required amount of time measured time may
+	  have small differences. (Mostly -ve).
+	  However, 5 ms amount is generally used for target, therfore
+	  we must ensure it is absolutely not greater than one targetted
+	  runtime.
+	*/
+	diff = curr_idle_time - cfs_b->prev_amount;
+	if (curr_idle_time &&  diff > 5000000) {
+		trace_printk("[ASSIGN] curr_idle_time:%llu Actual_idle_time:%lld\n",
+				curr_idle_time, diff);
+	}
+
+	/* Reset the idle start */
+	cfs_b->idle_time_start = ktime_get_ns();
+	cfs_b->prev_amount = amount;
+
+assign_out:
 	cfs_rq->runtime_remaining += amount;
 
 	return cfs_rq->runtime_remaining > 0;
@@ -5668,6 +5697,9 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->quota = RUNTIME_INF;
 	cfs_b->period = ns_to_ktime(default_cfs_period());
 	cfs_b->burst = 0;
+	cfs_b->idle_time_start = 0;
+	cfs_b->runtime_start = 0;
+	cfs_b->prev_amount = 0;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
