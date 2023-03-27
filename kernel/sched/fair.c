@@ -5023,7 +5023,8 @@ static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
 static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				   struct cfs_rq *cfs_rq, u64 target_runtime)
 {
-	u64 min_amount, amount = 0, curr_idle_time = 0;
+	u64 min_amount, amount = 0, curr_idle_time = 0, curr_runtime = 0;
+	struct rq *rq = rq_of(cfs_rq);
 	s64 diff = 0;
 
 	lockdep_assert_held(&cfs_b->lock);
@@ -5045,7 +5046,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	cfs_b->idle = 0;
 
 	if (cfs_b->idle_time_start) {
-		curr_idle_time = ktime_get_ns() - cfs_b->idle_time_start;
+		curr_idle_time = rq_clock(rq) - cfs_b->idle_time_start;
 	}
 
 	/*
@@ -5059,18 +5060,49 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	  However, 5 ms amount is generally used for target, therfore
 	  we must ensure it is absolutely not greater than one targetted
 	  runtime.
+
+	  When to account for runtime?
+	  By default the runtime is staggered around multiple idle periods.
+	  This is because vruntime can run out or other reasons can make it context switch
+	  But that's not the actual runtime of the application.
+	  Instead attempt to find the runtime until the first "real" idle duration
+	  is identified.
+
+	  The downside of this apporach is if a real idle duration is never
+	  found we will never spit out the runtime.
+	  But that also means we need entirety of the CPU. So that may not be too bad.
+	  Maybe at every 100 ms we can spit out the runtime in that case..
+
+	  TODO: Account when idle < amount. This means we were brought it sooner
+	  so subtract that diff. Could be small but may add up.
 	*/
 	diff = curr_idle_time - cfs_b->prev_amount;
 	if (curr_idle_time &&  diff > 5000000) {
+
+		/* Stop tracing runtime when idle found */
+		if (cfs_b->runtime_start) {
+			curr_runtime = rq_clock(rq) - cfs_b->runtime_start - diff;
+			trace_printk("[ASSIGN] runtime:%llu amount:%llu curr_runtime:%llu\n",
+				     cfs_b->runtime, amount, curr_runtime);
+			/* Reset runtime */
+			cfs_b->runtime_start = 0;
+		}
+
 		trace_printk("[ASSIGN] curr_idle_time:%llu Actual_idle_time:%lld\n",
 				curr_idle_time, diff);
+
+
 	}
 
 	/* Reset the idle start */
-	cfs_b->idle_time_start = ktime_get_ns();
+	cfs_b->idle_time_start = rq_clock(rq);
 	cfs_b->prev_amount = amount;
 
 assign_out:
+	/* Start monitoring the runtime if not started yet or is reset */
+	if (!cfs_b->runtime_start)
+		cfs_b->runtime_start = rq_clock(rq);
+
 	cfs_rq->runtime_remaining += amount;
 
 	return cfs_rq->runtime_remaining > 0;
