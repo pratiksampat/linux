@@ -5098,11 +5098,11 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	cfs_b->idle_time_start = rq_clock(rq);
 	cfs_b->prev_amount = amount;
 
-assign_out:
 	/* Start monitoring the runtime if not started yet or is reset */
 	if (!cfs_b->runtime_start)
 		cfs_b->runtime_start = rq_clock(rq);
 
+assign_out:
 	cfs_rq->runtime_remaining += amount;
 
 	return cfs_rq->runtime_remaining > 0;
@@ -5302,6 +5302,7 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
 	struct sched_entity *se;
 	long task_delta, idle_task_delta;
+	u64 curr_throttle_time;
 
 	se = cfs_rq->tg->se[cpu_of(rq)];
 
@@ -5310,7 +5311,13 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	update_rq_clock(rq);
 
 	raw_spin_lock(&cfs_b->lock);
-	cfs_b->throttled_time += rq_clock(rq) - cfs_rq->throttled_clock;
+	curr_throttle_time = rq_clock(rq) - cfs_rq->throttled_clock;
+	cfs_b->throttled_time += curr_throttle_time;
+	trace_printk("[UNTHROTTLE] curr_throttle_time:%llu\n", curr_throttle_time);
+	if (cfs_b->idle_time_start)
+		cfs_b->idle_time_start += curr_throttle_time;
+	if (cfs_b->runtime_start)
+		cfs_b->runtime_start += curr_throttle_time;
 	list_del_rcu(&cfs_rq->throttled_list);
 	raw_spin_unlock(&cfs_b->lock);
 
@@ -5436,6 +5443,9 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 
 	throttled = !list_empty(&cfs_b->throttled_cfs_rq);
 	cfs_b->nr_periods += overrun;
+
+	if (!cfs_b->idle)
+		trace_printk("[PERIOD] runtime:%llu runtime_used:%lld\n", cfs_b->runtime, cfs_b->quota - cfs_b->runtime);
 
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
