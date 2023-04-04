@@ -5098,11 +5098,11 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	cfs_b->idle_time_start = rq_clock(rq);
 	cfs_b->prev_amount = amount;
 
-assign_out:
 	/* Start monitoring the runtime if not started yet or is reset */
 	if (!cfs_b->runtime_start)
 		cfs_b->runtime_start = rq_clock(rq);
 
+assign_out:
 	cfs_rq->runtime_remaining += amount;
 
 	return cfs_rq->runtime_remaining > 0;
