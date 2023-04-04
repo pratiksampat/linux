@@ -5314,6 +5314,10 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	curr_throttle_time = rq_clock(rq) - cfs_rq->throttled_clock;
 	cfs_b->throttled_time += curr_throttle_time;
 	trace_printk("[UNTHROTTLE] curr_throttle_time:%llu\n", curr_throttle_time);
+	if (cfs_b->idle_time_start)
+		cfs_b->idle_time_start += curr_throttle_time;
+	if (cfs_b->runtime_start)
+		cfs_b->runtime_start += curr_throttle_time;
 	list_del_rcu(&cfs_rq->throttled_list);
 	raw_spin_unlock(&cfs_b->lock);
 
