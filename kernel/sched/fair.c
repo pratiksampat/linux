@@ -56,6 +56,8 @@
 #include "stats.h"
 #include "autogroup.h"
 
+#include <linux/sort.h>
+
 /*
  * Targeted preemption latency for CPU-bound tasks:
  *
@@ -5078,12 +5080,17 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	*/
 	diff = curr_idle_time - cfs_b->prev_amount;
 	if (curr_idle_time &&  diff > 5000000) {
-
+		cfs_b->idle_time_hist[cfs_b->period_agnostic_hist_idx] = diff;
 		/* Stop tracing runtime when idle found */
 		if (cfs_b->runtime_start) {
 			curr_runtime = rq_clock(rq) - cfs_b->runtime_start - diff;
 			trace_printk("[ASSIGN] runtime:%llu amount:%llu curr_runtime:%llu\n",
 				     cfs_b->runtime, amount, curr_runtime);
+			cfs_b->real_runtime_hist[cfs_b->period_agnostic_hist_idx] = curr_runtime;
+			cfs_b->period_agnostic_hist_idx++;
+			/* Wrap around if we are greater */
+			cfs_b->period_agnostic_hist_idx %= (MAX_REAL_HIST + 1);
+
 			/* Reset runtime */
 			cfs_b->runtime_start = 0;
 		}
@@ -5427,6 +5434,13 @@ next:
 	rcu_read_unlock();
 }
 
+static int cmp_u64(const void *A, const void *B)
+{
+	const u64 *a = A, *b = B;
+
+	return *a - *b;
+}
+
 /*
  * Responsible for refilling a task_group's bandwidth and unthrottling its
  * cfs_rqs as appropriate. If there has been no activity within the last
@@ -5444,8 +5458,67 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	throttled = !list_empty(&cfs_b->throttled_cfs_rq);
 	cfs_b->nr_periods += overrun;
 
-	if (!cfs_b->idle)
-		trace_printk("[PERIOD] runtime:%llu runtime_used:%lld\n", cfs_b->runtime, cfs_b->quota - cfs_b->runtime);
+	if (!cfs_b->idle) {
+		cfs_b->runtime_hist[cfs_b->period_hist_idx] = cfs_b->quota - cfs_b->runtime;
+		cfs_b->period_hist[cfs_b->period_hist_idx] = cfs_b->period;
+		cfs_b->period_hist_idx++;
+
+		trace_printk("[PERIOD] period:%llu runtime:%llu runtime_used:%lld\n",
+			     cfs_b->period, cfs_b->runtime, cfs_b->quota - cfs_b->runtime);
+	}
+
+	/* Recommend when the hist is full */
+	if (cfs_b->period_hist_idx >= MAX_PERIOD_HIST) {
+		u64 median_period;
+		u64 median_runtime;
+		u64 median_idle_time;
+		u64 median_calc_runtime;
+		u64 P95_period;
+		u64 P95_runtime;
+		u64 P95_idle_time;
+		u64 P95_calc_runtime;
+		int percentile_idx;
+
+		sort(cfs_b->period_hist, MAX_PERIOD_HIST, sizeof(u64), cmp_u64, NULL);
+		sort(cfs_b->runtime_hist, MAX_PERIOD_HIST, sizeof(u64), cmp_u64, NULL);
+		/* This array may not be full yet */
+		sort(cfs_b->idle_time_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+		sort(cfs_b->real_runtime_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+
+		percentile_idx = DIV_ROUND_UP(50 * (MAX_PERIOD_HIST - 1), 100);
+		median_period = cfs_b->period_hist[percentile_idx];
+		median_runtime = cfs_b->runtime_hist[percentile_idx];
+
+		percentile_idx = DIV_ROUND_UP(50 * (cfs_b->period_agnostic_hist_idx - 2), 100);
+		median_idle_time = cfs_b->idle_time_hist[percentile_idx];
+		median_calc_runtime = cfs_b->real_runtime_hist[percentile_idx];
+
+		percentile_idx = DIV_ROUND_UP(95 * (MAX_PERIOD_HIST - 1), 100);
+		P95_period = cfs_b->period_hist[percentile_idx];
+		P95_runtime = cfs_b->runtime_hist[percentile_idx];
+
+		percentile_idx = DIV_ROUND_UP(95 * (cfs_b->period_agnostic_hist_idx - 2), 100);
+		P95_idle_time = cfs_b->idle_time_hist[percentile_idx];
+		P95_calc_runtime = cfs_b->real_runtime_hist[percentile_idx];
+
+		trace_printk("[STATS] 50_period:%llu 50_runtime:%llu 50_idletime:%llu 50_calc_runtime:%llu 95_period:%llu 95_runtime:%llu 95_idletime:%llu 95_calc_runtime:%llu\n",
+			   median_period, median_runtime, median_idle_time, median_calc_runtime,
+			   P95_period, P95_runtime, P95_idle_time, P95_calc_runtime);
+
+		/*
+		  Cross multiply to indetify the best period:quota ratio
+		  Comparing 95P period dependent runtime vs median period agnostic runtime
+		*/
+		if (P95_runtime * (P95_calc_runtime + P95_idle_time) < P95_calc_runtime * P95_period) {
+			trace_printk("[RECOMMEND] quota:%llu period:%llu\n", P95_runtime, P95_period);
+		} else {
+			trace_printk("[RECOMMEND] quota:%llu period:%llu\n", P95_calc_runtime,
+				     P95_idle_time + P95_calc_runtime);
+		}
+		/* Reset the history buffer */
+		cfs_b->period_hist_idx = 0;
+		cfs_b->period_agnostic_hist_idx = 0;
+	}
 
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
@@ -5742,6 +5815,8 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->idle_time_start = 0;
 	cfs_b->runtime_start = 0;
 	cfs_b->prev_amount = 0;
+	cfs_b->period_hist_idx = 0;
+	cfs_b->period_agnostic_hist_idx = 0;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);

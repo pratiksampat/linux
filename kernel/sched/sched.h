@@ -339,6 +339,9 @@ struct rt_rq;
 
 extern struct list_head task_groups;
 
+#define MAX_PERIOD_HIST	10
+#define MAX_REAL_HIST		200
+
 struct cfs_bandwidth {
 #ifdef CONFIG_CFS_BANDWIDTH
 	raw_spinlock_t		lock;
@@ -358,6 +361,14 @@ struct cfs_bandwidth {
 	struct hrtimer		period_timer;
 	struct hrtimer		slack_timer;
 	struct list_head	throttled_cfs_rq;
+
+	/* Internal stats for the recommender */
+	int			period_hist_idx;
+	int			period_agnostic_hist_idx;
+	u64			runtime_hist[MAX_PERIOD_HIST];		/* Cummulative runtime in a period */
+	u64			period_hist[MAX_PERIOD_HIST];		/* Period time */
+	u64			idle_time_hist[MAX_REAL_HIST];		/* Calcuated period_agnostic idle time */
+	u64			real_runtime_hist[MAX_REAL_HIST];	/* Caclauted period-agnostic runtime */
 
 	/* Statistics: */
 	int			nr_periods;
