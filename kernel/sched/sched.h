@@ -355,6 +355,27 @@ struct cfs_bandwidth {
 	u64			prev_amount;
 	s64			hierarchical_quota;
 
+	/* Recommender interface */
+	/* Status -> 0 = off, 1 = manual mode (only recommend) , 2 = auto mode (recommend and apply) */
+	int			recommender_status;
+	/*
+	  Sampling interval when to take measurements
+	  Eg: Trace for 50 periods at every 100 periods
+	*/
+	int			recommender_trace_for;
+	int			recommender_trace_at;
+	/* How large or small the history window must be */
+	int			recommender_history;
+	/* Recommendations from the algorithm */
+	u64			recommender_period;
+	u64			recommender_quota;
+
+	/* Recommender interface helpers */
+	bool			recommender_active;
+	int			curr_interval;
+	u64			old_period;
+	u64			old_quota;
+
 	u8			idle;
 	u8			period_active;
 	u8			slack_started;

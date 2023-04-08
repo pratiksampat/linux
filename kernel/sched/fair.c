@@ -5477,6 +5477,8 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		u64 P95_runtime;
 		u64 P95_idle_time;
 		u64 P95_calc_runtime;
+		u64 temp_period;
+		u64 temp_quota;
 		int percentile_idx;
 
 		sort(cfs_b->period_hist, MAX_PERIOD_HIST, sizeof(u64), cmp_u64, NULL);
@@ -5510,11 +5512,22 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		  Comparing 95P period dependent runtime vs median period agnostic runtime
 		*/
 		if (P95_runtime * (P95_calc_runtime + P95_idle_time) < P95_calc_runtime * P95_period) {
-			trace_printk("[RECOMMEND] quota:%llu period:%llu\n", P95_runtime, P95_period);
+			temp_period = P95_period;
+			temp_quota = P95_runtime;
 		} else {
-			trace_printk("[RECOMMEND] quota:%llu period:%llu\n", P95_calc_runtime,
-				     P95_idle_time + P95_calc_runtime);
+			temp_period = P95_idle_time + P95_calc_runtime;
+			temp_quota = P95_calc_runtime;
 		}
+		cfs_b->recommender_period = temp_period;
+		cfs_b->recommender_quota = temp_quota;
+		trace_printk("[RECOMMEND] quota:%llu period:%llu\n", cfs_b->recommender_quota, cfs_b->recommender_period);
+
+		/* Apply the recommendation */
+		if (cfs_b->recommender_status == 2) {
+			cfs_b->period = cfs_b->recommender_period;
+			cfs_b->quota = cfs_b->recommender_quota;
+		}
+
 		/* Reset the history buffer */
 		cfs_b->period_hist_idx = 0;
 		cfs_b->period_agnostic_hist_idx = 0;
@@ -5817,6 +5830,14 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->prev_amount = 0;
 	cfs_b->period_hist_idx = 0;
 	cfs_b->period_agnostic_hist_idx = 0;
+	cfs_b->recommender_status = 0;
+	cfs_b->recommender_active = 0;
+	cfs_b->recommender_trace_for = 50;
+	cfs_b->recommender_trace_at = 100;
+	cfs_b->curr_interval = 0;
+	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
+	cfs_b->recommender_quota = RUNTIME_INF;
+	cfs_b->recommender_history = 10;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);

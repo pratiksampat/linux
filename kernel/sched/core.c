@@ -11092,6 +11092,94 @@ static ssize_t cpu_max_write(struct kernfs_open_file *of,
 		ret = tg_set_cfs_bandwidth(tg, period, quota, burst);
 	return ret ?: nbytes;
 }
+
+static s64 cpu_cfs_recommend_status_read_s64(struct cgroup_subsys_state *css,
+				  struct cftype *cft)
+{
+	return css_tg(css)->cfs_bandwidth.recommender_status;
+}
+
+static int cpu_cfs_recommend_status_write_s64(struct cgroup_subsys_state *css,
+				struct cftype *cft, s64 status)
+{
+	struct task_group *tg = css_tg(css);
+	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+	cfs_b->recommender_status = status;
+
+	return 0;
+}
+
+static ssize_t cpu_cfs_recommend_sample_write(struct kernfs_open_file *of,
+			     char *buf, size_t nbytes, loff_t off)
+{
+	char tok[21];	/* U64_MAX */
+	int trace_at = 0, trace_for = 0;
+	struct task_group *tg = css_tg(of_css(of));
+	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+
+	if (sscanf(buf, "%20s %d", tok, &trace_at) < 1)
+		return -EINVAL;
+
+	if (sscanf(tok, "%d", &trace_for) < 1)
+		return -EINVAL;
+
+	if (!trace_for || !trace_at || (trace_for > trace_at) || trace_for <= cfs_b->recommender_history)
+		return -EINVAL;
+
+	cfs_b->recommender_trace_for = trace_for;
+	cfs_b->recommender_trace_at = trace_at;
+
+	return nbytes;
+}
+
+static int cpu_cfs_recommend_sample_show(struct seq_file *sf, void *v)
+{
+	struct task_group *tg = css_tg(seq_css(sf));
+
+	seq_printf(sf, "%d %d\n", tg->cfs_bandwidth.recommender_trace_for,
+		   tg->cfs_bandwidth.recommender_trace_at);
+
+	return 0;
+}
+
+static s64 cpu_cfs_recommend_history_read_s64(struct cgroup_subsys_state *css,
+				  struct cftype *cft)
+{
+	return css_tg(css)->cfs_bandwidth.recommender_history;
+}
+
+static int cpu_cfs_recommend_history_write_s64(struct cgroup_subsys_state *css,
+				struct cftype *cft, s64 history)
+{
+	struct task_group *tg = css_tg(css);
+	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+
+	if (cfs_b->recommender_trace_for < history)
+		return -EINVAL;
+
+	cfs_b->recommender_history = history;
+
+	return 0;
+}
+
+static int cpu_cfs_recommend_max_show(struct seq_file *sf, void *v)
+{
+	struct task_group *tg = css_tg(seq_css(sf));
+	u64 period_us, quota_us;
+
+	period_us = tg->cfs_bandwidth.recommender_period;
+	quota_us = tg->cfs_bandwidth.recommender_quota;
+
+	do_div(period_us, NSEC_PER_USEC);
+
+	if (quota_us != RUNTIME_INF)
+		do_div(quota_us, NSEC_PER_USEC);
+
+	cpu_period_quota_print(sf, period_us, quota_us);
+	return 0;
+}
+
+
 #endif
 
 static struct cftype cpu_files[] = {
@@ -11127,6 +11215,33 @@ static struct cftype cpu_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.read_u64 = cpu_cfs_burst_read_u64,
 		.write_u64 = cpu_cfs_burst_write_u64,
+	},
+	/* Status -> 0 = off, 1 = manual mode (only recommend) , 2 = auto mode (recommend and apply) */
+	{
+		.name = "recommend.status",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_s64 = cpu_cfs_recommend_status_read_s64,
+		.write_s64 = cpu_cfs_recommend_status_write_s64,
+	},
+	/* Sampling interval when to take measurements <trace_for> <trace_at> in periods */
+	{
+		.name = "recommend.tracing_interval",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpu_cfs_recommend_sample_show,
+		.write = cpu_cfs_recommend_sample_write,
+	},
+	/* Recommend every history periods */
+	{
+		.name = "recommend.history",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_s64 = cpu_cfs_recommend_history_read_s64,
+		.write_s64 = cpu_cfs_recommend_history_write_s64,
+	},
+	/* Recommended period, quota value */
+	{
+		.name = "recommend.max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpu_cfs_recommend_max_show,
 	},
 #endif
 #ifdef CONFIG_UCLAMP_TASK_GROUP
