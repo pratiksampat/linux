@@ -355,6 +355,30 @@ struct cfs_bandwidth {
 	u64			prev_amount;
 	s64			hierarchical_quota;
 
+	/* Recommender interface */
+	/* Status -> 0 = off, 1 = manual mode (only recommend) , 2 = auto mode (recommend and apply) */
+	int			recommender_status;
+	/*
+	  Sampling interval when to take measurements
+	  Eg: Trace for 50 periods at every 100 periods
+	*/
+	int			recommender_trace_for;
+	int			recommender_trace_at;
+	/* How large or small the history window must be */
+	int			recommender_history;
+	/* Recommendations from the algorithm */
+	u64			recommender_period;
+	u64			recommender_quota;
+
+	/* Recommender interface helpers */
+	bool			recommender_active;
+	int			curr_interval;
+	u64			old_period;
+	u64			old_quota;
+	int 			curr_throttle;
+	bool			trace_ulim;
+	int			trace_multiplier;
+
 	u8			idle;
 	u8			period_active;
 	u8			slack_started;
@@ -365,10 +389,10 @@ struct cfs_bandwidth {
 	/* Internal stats for the recommender */
 	int			period_hist_idx;
 	int			period_agnostic_hist_idx;
-	u64			runtime_hist[MAX_PERIOD_HIST];		/* Cummulative runtime in a period */
-	u64			period_hist[MAX_PERIOD_HIST];		/* Period time */
-	u64			idle_time_hist[MAX_REAL_HIST];		/* Calcuated period_agnostic idle time */
-	u64			real_runtime_hist[MAX_REAL_HIST];	/* Caclauted period-agnostic runtime */
+	u64			*runtime_hist;				/* Cummulative runtime in a period */
+	u64			*period_hist;				/* Period time */
+	u64			*idle_time_hist;			/* Calcuated period_agnostic idle time */
+	u64			*real_runtime_hist;			/* Caclauted period-agnostic runtime */
 
 	/* Statistics: */
 	int			nr_periods;

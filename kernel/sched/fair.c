@@ -5025,7 +5025,8 @@ static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
 static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				   struct cfs_rq *cfs_rq, u64 target_runtime)
 {
-	u64 min_amount, amount = 0, curr_idle_time = 0, curr_runtime = 0;
+	u64 min_amount, amount = 0, curr_idle_time = 0;
+	s64 curr_runtime = 0;
 	struct rq *rq = rq_of(cfs_rq);
 	s64 diff = 0;
 
@@ -5046,6 +5047,9 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	amount = min(cfs_b->runtime, min_amount);
 	cfs_b->runtime -= amount;
 	cfs_b->idle = 0;
+
+	if (!cfs_b->recommender_active)
+		goto assign_out;
 
 	if (cfs_b->idle_time_start) {
 		curr_idle_time = rq_clock(rq) - cfs_b->idle_time_start;
@@ -5084,13 +5088,15 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 		/* Stop tracing runtime when idle found */
 		if (cfs_b->runtime_start) {
 			curr_runtime = rq_clock(rq) - cfs_b->runtime_start - diff;
+			if (curr_runtime < 0)
+				goto reset_runtime;
 			trace_printk("[ASSIGN] runtime:%llu amount:%llu curr_runtime:%llu\n",
 				     cfs_b->runtime, amount, curr_runtime);
 			cfs_b->real_runtime_hist[cfs_b->period_agnostic_hist_idx] = curr_runtime;
 			cfs_b->period_agnostic_hist_idx++;
 			/* Wrap around if we are greater */
-			cfs_b->period_agnostic_hist_idx %= (MAX_REAL_HIST + 1);
-
+			cfs_b->period_agnostic_hist_idx %= ((20 * cfs_b->recommender_history) + 1);
+reset_runtime:
 			/* Reset runtime */
 			cfs_b->runtime_start = 0;
 		}
@@ -5320,11 +5326,7 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	raw_spin_lock(&cfs_b->lock);
 	curr_throttle_time = rq_clock(rq) - cfs_rq->throttled_clock;
 	cfs_b->throttled_time += curr_throttle_time;
-	trace_printk("[UNTHROTTLE] curr_throttle_time:%llu\n", curr_throttle_time);
-	if (cfs_b->idle_time_start)
-		cfs_b->idle_time_start += curr_throttle_time;
-	if (cfs_b->runtime_start)
-		cfs_b->runtime_start += curr_throttle_time;
+
 	list_del_rcu(&cfs_rq->throttled_list);
 	raw_spin_unlock(&cfs_b->lock);
 
@@ -5387,6 +5389,16 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 
 unthrottle_throttle:
 	assert_list_leaf_cfs_rq(rq);
+
+	curr_throttle_time = rq_clock(rq) - cfs_rq->throttled_clock;
+	if (cfs_b->recommender_active) {
+		trace_printk("[UNTHROTTLE] curr_throttle_time:%llu\n", curr_throttle_time);
+		if (cfs_b->idle_time_start)
+			cfs_b->idle_time_start += curr_throttle_time;
+		if (cfs_b->runtime_start)
+			cfs_b->runtime_start += curr_throttle_time;
+	}
+
 
 	/* Determine whether we need to wake up potentially idle CPU: */
 	if (rq->curr == rq->idle && rq->cfs.nr_running)
@@ -5458,17 +5470,22 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	throttled = !list_empty(&cfs_b->throttled_cfs_rq);
 	cfs_b->nr_periods += overrun;
 
+	if (!cfs_b->recommender_active)
+		goto period_timer_out;
+
 	if (!cfs_b->idle) {
 		cfs_b->runtime_hist[cfs_b->period_hist_idx] = cfs_b->quota - cfs_b->runtime;
 		cfs_b->period_hist[cfs_b->period_hist_idx] = cfs_b->period;
 		cfs_b->period_hist_idx++;
+
+		cfs_b->curr_throttle++;
 
 		trace_printk("[PERIOD] period:%llu runtime:%llu runtime_used:%lld\n",
 			     cfs_b->period, cfs_b->runtime, cfs_b->quota - cfs_b->runtime);
 	}
 
 	/* Recommend when the hist is full */
-	if (cfs_b->period_hist_idx >= MAX_PERIOD_HIST) {
+	if (cfs_b->period_hist_idx >= cfs_b->recommender_history) {
 		u64 median_period;
 		u64 median_runtime;
 		u64 median_idle_time;
@@ -5477,15 +5494,19 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		u64 P95_runtime;
 		u64 P95_idle_time;
 		u64 P95_calc_runtime;
+		u64 temp_period;
+		u64 temp_quota;
+		u64 P10_idle_time;
 		int percentile_idx;
 
-		sort(cfs_b->period_hist, MAX_PERIOD_HIST, sizeof(u64), cmp_u64, NULL);
-		sort(cfs_b->runtime_hist, MAX_PERIOD_HIST, sizeof(u64), cmp_u64, NULL);
+		sort(cfs_b->period_hist, cfs_b->recommender_history, sizeof(u64), cmp_u64, NULL);
+		sort(cfs_b->runtime_hist, cfs_b->recommender_history, sizeof(u64), cmp_u64, NULL);
 		/* This array may not be full yet */
-		sort(cfs_b->idle_time_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
-		sort(cfs_b->real_runtime_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
-
-		percentile_idx = DIV_ROUND_UP(50 * (MAX_PERIOD_HIST - 1), 100);
+		if (cfs_b->period_agnostic_hist_idx - 1 > 0) {
+			sort(cfs_b->idle_time_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+			sort(cfs_b->real_runtime_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+		}
+		percentile_idx = DIV_ROUND_UP(50 * (cfs_b->recommender_history - 1), 100);
 		median_period = cfs_b->period_hist[percentile_idx];
 		median_runtime = cfs_b->runtime_hist[percentile_idx];
 
@@ -5493,7 +5514,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		median_idle_time = cfs_b->idle_time_hist[percentile_idx];
 		median_calc_runtime = cfs_b->real_runtime_hist[percentile_idx];
 
-		percentile_idx = DIV_ROUND_UP(95 * (MAX_PERIOD_HIST - 1), 100);
+		percentile_idx = DIV_ROUND_UP(10 * (cfs_b->period_agnostic_hist_idx - 2), 100);
+		P10_idle_time = cfs_b->idle_time_hist[percentile_idx];
+
+		percentile_idx = DIV_ROUND_UP(95 * (cfs_b->recommender_history - 1), 100);
 		P95_period = cfs_b->period_hist[percentile_idx];
 		P95_runtime = cfs_b->runtime_hist[percentile_idx];
 
@@ -5501,25 +5525,138 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		P95_idle_time = cfs_b->idle_time_hist[percentile_idx];
 		P95_calc_runtime = cfs_b->real_runtime_hist[percentile_idx];
 
-		trace_printk("[STATS] 50_period:%llu 50_runtime:%llu 50_idletime:%llu 50_calc_runtime:%llu 95_period:%llu 95_runtime:%llu 95_idletime:%llu 95_calc_runtime:%llu\n",
-			   median_period, median_runtime, median_idle_time, median_calc_runtime,
+		trace_printk("[STATS] 10_idle_time:%llu 50_period:%llu 50_runtime:%llu 50_idletime:%llu 50_calc_runtime:%llu 95_period:%llu 95_runtime:%llu 95_idletime:%llu 95_calc_runtime:%llu\n",
+			   P10_idle_time, median_period, median_runtime, median_idle_time, median_calc_runtime,
 			   P95_period, P95_runtime, P95_idle_time, P95_calc_runtime);
 
 		/*
-		  Cross multiply to indetify the best period:quota ratio
-		  Comparing 95P period dependent runtime vs median period agnostic runtime
+		  Always set to cummulative period and quota if:
+
+		  1. when cummulative runtime is equal to quota (high likely
+		  that it has been throttled) but we do not have enough period
+		  agnostic history (likely due to no idle durations) to make
+		  a decision otherwise.
 		*/
-		if (P95_runtime * (P95_calc_runtime + P95_idle_time) < P95_calc_runtime * P95_period) {
-			trace_printk("[RECOMMEND] quota:%llu period:%llu\n", P95_runtime, P95_period);
+
+		/*
+			Cross multiply to indetify the best period:quota ratio
+			Comparing 95P period dependent runtime vs median period agnostic runtime
+		*/
+		if ((P95_runtime * (P95_calc_runtime + median_idle_time) <
+			P95_calc_runtime * P95_period) ||
+			(P95_calc_runtime == 0 || (P95_idle_time + P95_calc_runtime == 0))) {
+			temp_period = P95_period;
+			temp_quota = P95_runtime;
+			trace_printk("[DEBUG] Within ELSE-IF period:%llu quota%llu\n",temp_period, temp_quota);
 		} else {
-			trace_printk("[RECOMMEND] quota:%llu period:%llu\n", P95_calc_runtime,
-				     P95_idle_time + P95_calc_runtime);
+			temp_period = median_idle_time + P95_calc_runtime;
+			temp_quota = P95_calc_runtime;
+			trace_printk("[DEBUG] Within ELSE period:%llu quota%llu\n",temp_period, temp_quota);
 		}
+
+		if (P95_runtime == cfs_b->quota &&
+		    (P95_calc_runtime != 0 || (median_idle_time + P95_calc_runtime != 0))) {
+			temp_period = median_idle_time + P95_calc_runtime;
+			temp_quota = P95_calc_runtime;
+			trace_printk("[DEBUG] Within IF period:%llu quota%llu\n",temp_period, temp_quota);
+		}
+
+		/* If throttle is the majority then set unlimited for the next tracing interval */
+		if ((cfs_b->curr_throttle++ > cfs_b->recommender_history >> 1) &&
+		    cfs_b->recommender_period > cfs_b->period - 5000000 &&
+		    cfs_b->recommender_quota > cfs_b->quota - 5000000) {
+			cfs_b->trace_ulim = true;
+
+			/* Scale up the unlimited multiplier instead of giving it everything */
+			cfs_b->trace_multiplier++;
+			if (cfs_b->trace_multiplier > num_online_cpus()) {
+				cfs_b->trace_multiplier = num_online_cpus();
+			}
+			trace_printk("[DEBUG] Unlimited quota for next period\n");
+		} else {
+			trace_printk("[DEBUG] limited quota for next period\n");
+			cfs_b->trace_ulim = false;
+			cfs_b->trace_multiplier = 0;
+		}
+
+		if (temp_period && temp_quota) {
+			cfs_b->recommender_period = temp_period;
+			cfs_b->recommender_quota = temp_quota;
+		}
+
 		/* Reset the history buffer */
 		cfs_b->period_hist_idx = 0;
 		cfs_b->period_agnostic_hist_idx = 0;
+		cfs_b->curr_throttle = 0;
+
+		memset(cfs_b->period_hist, 0, cfs_b->recommender_history * sizeof(cfs_b->period_hist));
+		memset(cfs_b->runtime_hist, 0, cfs_b->recommender_history * sizeof(cfs_b->runtime_hist));
+		memset(cfs_b->idle_time_hist, 0, 20 * cfs_b->recommender_history * sizeof(cfs_b->idle_time_hist));
+		memset(cfs_b->real_runtime_hist, 0, 20 * cfs_b->recommender_history * sizeof(cfs_b->real_runtime_hist));
 	}
 
+period_timer_out:
+	if (cfs_b->recommender_status) {
+		/* Greater than trace_for, less than trace_at */
+		if (cfs_b->curr_interval > cfs_b->recommender_trace_for &&
+		    cfs_b->curr_interval < cfs_b->recommender_trace_at) {
+			/* Stop tracing and apply the recommendation */
+			cfs_b->recommender_active = false;
+
+			/* Apply the recommendation */
+			if (cfs_b->recommender_status == 2) {
+				if (cfs_b->recommender_period < 5000000) /* If quota < 5 ms add a bit more to avoid stalls*/
+					cfs_b->recommender_period += 5000000;
+				if (cfs_b->recommender_quota < 5000000) /* If quota < 5 ms add a bit more to avoid stalls*/
+					cfs_b->recommender_quota += 5000000;
+				cfs_b->period = cfs_b->recommender_period;
+				cfs_b->quota = cfs_b->recommender_quota;
+			} else {
+				cfs_b->period = cfs_b->old_period;
+				cfs_b->quota = cfs_b->old_quota;
+			}
+
+			trace_printk("[RECOMMEND] quota:%llu period:%llu\n", cfs_b->recommender_quota, cfs_b->recommender_period);
+
+			trace_printk("[DEBUG] SUSPEND trace_for:%d trace_at:%d curr_interval:%d\n",
+			     cfs_b->recommender_trace_for, cfs_b->recommender_trace_at, cfs_b->curr_interval);
+
+
+		}
+		if (cfs_b->curr_interval > cfs_b->recommender_trace_at) {
+			/* Reset interval start tracing again */
+			cfs_b->curr_interval = 0;
+			cfs_b->recommender_active = true;
+
+			/* Set the period and quota to unlimited for tracing */
+			/* TODO: Figure out to trace without this. Aka with throttle */
+			/*
+			  Note: quota is num_cpus * default_cfs_period to support
+			  multi-threading and essentially behave as RUNTIME_INF
+			*/
+			if (cfs_b->trace_ulim) {
+				int multiplier = cfs_b->trace_multiplier;
+
+				cfs_b->old_period = cfs_b->period;
+				cfs_b->old_quota = cfs_b->quota;
+				cfs_b->period = ns_to_ktime(default_cfs_period());
+
+				/* Make sure we give it at least one CPU */
+				if (!multiplier)
+					multiplier = 1;
+				cfs_b->quota = ns_to_ktime(multiplier * default_cfs_period());
+			}
+
+			trace_printk("[DEBUG] RESTART trace_for:%d trace_at:%d curr_interval:%d\n",
+			     cfs_b->recommender_trace_for, cfs_b->recommender_trace_at, cfs_b->curr_interval);
+
+		}
+		cfs_b->curr_interval++;
+		trace_printk("[DEBUG] trace_for:%d trace_at:%d curr_interval:%d period:%llu quota:%llu\n",
+			     cfs_b->recommender_trace_for, cfs_b->recommender_trace_at, cfs_b->curr_interval,
+			     cfs_b->period,cfs_b->quota);
+
+	}
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
 
@@ -5817,6 +5954,25 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->prev_amount = 0;
 	cfs_b->period_hist_idx = 0;
 	cfs_b->period_agnostic_hist_idx = 0;
+	cfs_b->recommender_status = 0;
+	cfs_b->recommender_active = 0;
+	cfs_b->recommender_trace_for = 50;
+	cfs_b->recommender_trace_at = 100;
+	cfs_b->curr_interval = 0;
+	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
+	cfs_b->recommender_quota = RUNTIME_INF;
+	cfs_b->recommender_history = 10;
+	cfs_b->curr_throttle = 0;
+	cfs_b->trace_ulim = false;
+	cfs_b->trace_multiplier = 0;
+
+	cfs_b->runtime_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->period_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->idle_time_hist = kmalloc(20 * cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->real_runtime_hist = kmalloc(20 * cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+
+	if (!cfs_b->runtime_hist || !cfs_b->period_hist || !cfs_b->idle_time_hist || !cfs_b->real_runtime_hist)
+		return;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
@@ -5849,6 +6005,11 @@ static void destroy_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	/* init_cfs_bandwidth() was not called */
 	if (!cfs_b->throttled_cfs_rq.next)
 		return;
+
+	kfree(cfs_b->runtime_hist);
+	kfree(cfs_b->period_hist);
+	kfree(cfs_b->idle_time_hist);
+	kfree(cfs_b->real_runtime_hist);
 
 	hrtimer_cancel(&cfs_b->period_timer);
 	hrtimer_cancel(&cfs_b->slack_timer);
