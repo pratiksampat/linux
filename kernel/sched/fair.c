@@ -5047,6 +5047,9 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	cfs_b->runtime -= amount;
 	cfs_b->idle = 0;
 
+	if (!cfs_b->recommender_active)
+		goto assign_out;
+
 	if (cfs_b->idle_time_start) {
 		curr_idle_time = rq_clock(rq) - cfs_b->idle_time_start;
 	}
@@ -5320,11 +5323,15 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	raw_spin_lock(&cfs_b->lock);
 	curr_throttle_time = rq_clock(rq) - cfs_rq->throttled_clock;
 	cfs_b->throttled_time += curr_throttle_time;
-	trace_printk("[UNTHROTTLE] curr_throttle_time:%llu\n", curr_throttle_time);
-	if (cfs_b->idle_time_start)
-		cfs_b->idle_time_start += curr_throttle_time;
-	if (cfs_b->runtime_start)
-		cfs_b->runtime_start += curr_throttle_time;
+
+	if (cfs_b->recommender_active) {
+		trace_printk("[UNTHROTTLE] curr_throttle_time:%llu\n", curr_throttle_time);
+		if (cfs_b->idle_time_start)
+			cfs_b->idle_time_start += curr_throttle_time;
+		if (cfs_b->runtime_start)
+			cfs_b->runtime_start += curr_throttle_time;
+	}
+
 	list_del_rcu(&cfs_rq->throttled_list);
 	raw_spin_unlock(&cfs_b->lock);
 
@@ -5458,6 +5465,9 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	throttled = !list_empty(&cfs_b->throttled_cfs_rq);
 	cfs_b->nr_periods += overrun;
 
+	if (!cfs_b->recommender_active)
+		goto period_timer_out;
+
 	if (!cfs_b->idle) {
 		cfs_b->runtime_hist[cfs_b->period_hist_idx] = cfs_b->quota - cfs_b->runtime;
 		cfs_b->period_hist[cfs_b->period_hist_idx] = cfs_b->period;
@@ -5532,6 +5542,8 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		cfs_b->period_hist_idx = 0;
 		cfs_b->period_agnostic_hist_idx = 0;
 	}
+
+period_timer_out:
 
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);

@@ -11106,6 +11106,11 @@ static int cpu_cfs_recommend_status_write_s64(struct cgroup_subsys_state *css,
 	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
 	cfs_b->recommender_status = status;
 
+	if (status == 1 || status == 2)
+		cfs_b->recommender_active = true;
+	else
+		cfs_b->recommender_active = false;
+
 	return 0;
 }
 
