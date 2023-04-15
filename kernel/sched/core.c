@@ -11105,11 +11105,16 @@ static int cpu_cfs_recommend_status_write_s64(struct cgroup_subsys_state *css,
 	struct task_group *tg = css_tg(css);
 	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
 	cfs_b->recommender_status = status;
+	cfs_b->recommender_active = false;
 
-	if (status == 1 || status == 2)
-		cfs_b->recommender_active = true;
-	else
-		cfs_b->recommender_active = false;
+	if (!status)
+		return 0;
+
+	cfs_b->recommender_active = true;
+	cfs_b->old_period = cfs_b->period;
+	cfs_b->old_quota = cfs_b->quota;
+	cfs_b->period = ns_to_ktime(100000000ULL);
+	cfs_b->quota = ns_to_ktime(num_online_cpus() * 100000000ULL);
 
 	return 0;
 }
