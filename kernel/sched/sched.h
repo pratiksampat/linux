@@ -386,10 +386,14 @@ struct cfs_bandwidth {
 	/* Internal stats for the recommender */
 	int			period_hist_idx;
 	int			period_agnostic_hist_idx;
-	u64			runtime_hist[MAX_PERIOD_HIST];		/* Cummulative runtime in a period */
-	u64			period_hist[MAX_PERIOD_HIST];		/* Period time */
-	u64			idle_time_hist[MAX_REAL_HIST];		/* Calcuated period_agnostic idle time */
-	u64			real_runtime_hist[MAX_REAL_HIST];	/* Caclauted period-agnostic runtime */
+	// u64			runtime_hist[MAX_PERIOD_HIST];		/* Cummulative runtime in a period */
+	// u64			period_hist[MAX_PERIOD_HIST];		/* Period time */
+	// u64			idle_time_hist[MAX_REAL_HIST];		/* Calcuated period_agnostic idle time */
+	// u64			real_runtime_hist[MAX_REAL_HIST];	/* Caclauted period-agnostic runtime */
+	u64			*runtime_hist;				/* Cummulative runtime in a period */
+	u64			*period_hist;				/* Period time */
+	u64			*idle_time_hist;			/* Calcuated period_agnostic idle time */
+	u64			*real_runtime_hist;			/* Caclauted period-agnostic runtime */
 
 	/* Statistics: */
 	int			nr_periods;

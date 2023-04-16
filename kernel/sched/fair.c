@@ -5092,7 +5092,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			cfs_b->real_runtime_hist[cfs_b->period_agnostic_hist_idx] = curr_runtime;
 			cfs_b->period_agnostic_hist_idx++;
 			/* Wrap around if we are greater */
-			cfs_b->period_agnostic_hist_idx %= (MAX_REAL_HIST + 1);
+			cfs_b->period_agnostic_hist_idx %= ((20 * cfs_b->recommender_history) + 1);
 
 			/* Reset runtime */
 			cfs_b->runtime_start = 0;
@@ -5478,7 +5478,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	}
 
 	/* Recommend when the hist is full */
-	if (cfs_b->period_hist_idx >= MAX_PERIOD_HIST) {
+	if (cfs_b->period_hist_idx >= cfs_b->recommender_history) {
 		u64 median_period;
 		u64 median_runtime;
 		u64 median_idle_time;
@@ -5491,13 +5491,13 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		u64 temp_quota;
 		int percentile_idx;
 
-		sort(cfs_b->period_hist, MAX_PERIOD_HIST, sizeof(u64), cmp_u64, NULL);
-		sort(cfs_b->runtime_hist, MAX_PERIOD_HIST, sizeof(u64), cmp_u64, NULL);
+		sort(cfs_b->period_hist, cfs_b->recommender_history, sizeof(u64), cmp_u64, NULL);
+		sort(cfs_b->runtime_hist, cfs_b->recommender_history, sizeof(u64), cmp_u64, NULL);
 		/* This array may not be full yet */
 		sort(cfs_b->idle_time_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
 		sort(cfs_b->real_runtime_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
 
-		percentile_idx = DIV_ROUND_UP(50 * (MAX_PERIOD_HIST - 1), 100);
+		percentile_idx = DIV_ROUND_UP(50 * (cfs_b->recommender_history - 1), 100);
 		median_period = cfs_b->period_hist[percentile_idx];
 		median_runtime = cfs_b->runtime_hist[percentile_idx];
 
@@ -5505,7 +5505,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		median_idle_time = cfs_b->idle_time_hist[percentile_idx];
 		median_calc_runtime = cfs_b->real_runtime_hist[percentile_idx];
 
-		percentile_idx = DIV_ROUND_UP(95 * (MAX_PERIOD_HIST - 1), 100);
+		percentile_idx = DIV_ROUND_UP(95 * (cfs_b->recommender_history - 1), 100);
 		P95_period = cfs_b->period_hist[percentile_idx];
 		P95_runtime = cfs_b->runtime_hist[percentile_idx];
 
@@ -5875,6 +5875,14 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->recommender_quota = RUNTIME_INF;
 	cfs_b->recommender_history = 10;
 
+	cfs_b->runtime_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->period_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->idle_time_hist = kmalloc(20 * cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->real_runtime_hist = kmalloc(20 * cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+
+	if (!cfs_b->runtime_hist || !cfs_b->period_hist || !cfs_b->idle_time_hist || !cfs_b->real_runtime_hist)
+		return;
+
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
 	cfs_b->period_timer.function = sched_cfs_period_timer;
@@ -5906,6 +5914,11 @@ static void destroy_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	/* init_cfs_bandwidth() was not called */
 	if (!cfs_b->throttled_cfs_rq.next)
 		return;
+
+	kfree(cfs_b->runtime_hist);
+	kfree(cfs_b->period_hist);
+	kfree(cfs_b->idle_time_hist);
+	kfree(cfs_b->real_runtime_hist);
 
 	hrtimer_cancel(&cfs_b->period_timer);
 	hrtimer_cancel(&cfs_b->slack_timer);

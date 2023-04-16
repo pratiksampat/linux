@@ -11163,9 +11163,30 @@ static int cpu_cfs_recommend_history_write_s64(struct cgroup_subsys_state *css,
 {
 	struct task_group *tg = css_tg(css);
 	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+	u64 *temp_runtime_hist, *temp_period_hist, *temp_idle_time_hist, *temp_real_runtime_hist;
 
 	if (cfs_b->recommender_trace_for < history)
 		return -EINVAL;
+
+	temp_runtime_hist = krealloc(cfs_b->runtime_hist, history * sizeof(u64), GFP_KERNEL);
+	temp_period_hist = krealloc(cfs_b->period_hist, history * sizeof(u64), GFP_KERNEL);
+	temp_idle_time_hist = krealloc(cfs_b->idle_time_hist, 20 * history * sizeof(u64), GFP_KERNEL);
+	temp_real_runtime_hist = krealloc(cfs_b->real_runtime_hist, 20 * history * sizeof(u64), GFP_KERNEL);
+
+	if (temp_runtime_hist || temp_period_hist ||
+	    temp_idle_time_hist || temp_real_runtime_hist) {
+		cfs_b->runtime_hist = temp_runtime_hist;
+		cfs_b->period_hist = temp_period_hist;
+		cfs_b->idle_time_hist = temp_idle_time_hist;
+		cfs_b->real_runtime_hist = temp_real_runtime_hist;
+	} else {
+		kfree(cfs_b->runtime_hist);
+		kfree(cfs_b->period_hist);
+		kfree(cfs_b->idle_time_hist);
+		kfree(cfs_b->real_runtime_hist);
+
+		return -ENOMEM;
+	}
 
 	cfs_b->recommender_history = history;
 
