@@ -5549,6 +5549,8 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	}
 
 period_timer_out:
+/* TODO: Only for debugging REMOVE These Changes */
+#if 0
 	if (cfs_b->recommender_status) {
 		if (cfs_b->curr_interval > cfs_b->recommender_trace_for) {
 			/* Stop tracing and restore old period and quota */
@@ -5574,6 +5576,8 @@ period_timer_out:
 		cfs_b->curr_interval++;
 	}
 
+#endif
+/* TODO: Only for debugging REMOVE These Changes */
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
 
@@ -5879,6 +5883,10 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
 	cfs_b->recommender_quota = RUNTIME_INF;
 	cfs_b->recommender_history = 10;
+
+	/* TODO: Only for debugging REMOVE These Changes */
+	cfs_b->recommender_active = true;
+	/* TODO: Only for debugging REMOVE These Changes */
 
 	cfs_b->runtime_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->period_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
