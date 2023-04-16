@@ -5494,9 +5494,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		sort(cfs_b->period_hist, cfs_b->recommender_history, sizeof(u64), cmp_u64, NULL);
 		sort(cfs_b->runtime_hist, cfs_b->recommender_history, sizeof(u64), cmp_u64, NULL);
 		/* This array may not be full yet */
-		sort(cfs_b->idle_time_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
-		sort(cfs_b->real_runtime_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
-
+		if (cfs_b->period_agnostic_hist_idx - 1 > 0) {
+			sort(cfs_b->idle_time_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+			sort(cfs_b->real_runtime_hist, cfs_b->period_agnostic_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+		}
 		percentile_idx = DIV_ROUND_UP(50 * (cfs_b->recommender_history - 1), 100);
 		median_period = cfs_b->period_hist[percentile_idx];
 		median_runtime = cfs_b->runtime_hist[percentile_idx];
@@ -5521,15 +5522,19 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		  Cross multiply to indetify the best period:quota ratio
 		  Comparing 95P period dependent runtime vs median period agnostic runtime
 		*/
-		if (P95_runtime * (P95_calc_runtime + P95_idle_time) < P95_calc_runtime * P95_period) {
+		if (!P95_period || !(P95_calc_runtime + P95_idle_time) ||
+		    (P95_runtime * (P95_calc_runtime + P95_idle_time) <
+		    P95_calc_runtime * P95_period)) {
 			temp_period = P95_period;
 			temp_quota = P95_runtime;
 		} else {
 			temp_period = P95_idle_time + P95_calc_runtime;
 			temp_quota = P95_calc_runtime;
 		}
-		cfs_b->recommender_period = temp_period;
-		cfs_b->recommender_quota = temp_quota;
+		if (temp_period && temp_quota) {
+			cfs_b->recommender_period = temp_period;
+			cfs_b->recommender_quota = temp_quota;
+		}
 		trace_printk("[RECOMMEND] quota:%llu period:%llu\n", cfs_b->recommender_quota, cfs_b->recommender_period);
 
 		/* Apply the recommendation */
