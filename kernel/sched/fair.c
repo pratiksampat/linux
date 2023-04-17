@@ -5570,35 +5570,17 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	}
 
 period_timer_out:
-/* TODO: Only for debugging REMOVE These Changes */
-#if 0
 	if (cfs_b->recommender_status) {
 		if (cfs_b->curr_interval > cfs_b->recommender_trace_for) {
 			/* Stop tracing and restore old period and quota */
 			cfs_b->recommender_active = false;
-			cfs_b->period = cfs_b->old_period;
-			cfs_b->quota = cfs_b->old_quota;
 		} else if (cfs_b->curr_interval > cfs_b->recommender_trace_at) {
 			/* Reset interval start tracing again */
 			cfs_b->curr_interval = 0;
 			cfs_b->recommender_active = true;
-
-			/* Set the period and quota to 100:100 (unlimited) for tracing */
-			/* TODO: Figure out to trace without this. Aka with throttle */
-			/*
-			  Note: quota is num_cpus * default_cfs_period to support
-			  multi-threading and essentially behave as RUNTIME_INF
-			*/
-			cfs_b->old_period = cfs_b->period;
-			cfs_b->old_quota = cfs_b->quota;
-			cfs_b->period = ns_to_ktime(default_cfs_period());
-			cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
 		}
 		cfs_b->curr_interval++;
 	}
-
-#endif
-/* TODO: Only for debugging REMOVE These Changes */
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
 
@@ -5904,10 +5886,6 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
 	cfs_b->recommender_quota = RUNTIME_INF;
 	cfs_b->recommender_history = 10;
-
-	/* TODO: Only for debugging REMOVE These Changes */
-	cfs_b->recommender_active = true;
-	/* TODO: Only for debugging REMOVE These Changes */
 
 	cfs_b->runtime_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->period_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);

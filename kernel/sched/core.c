@@ -11111,12 +11111,7 @@ static int cpu_cfs_recommend_status_write_s64(struct cgroup_subsys_state *css,
 		return 0;
 
 	cfs_b->recommender_active = true;
-#if 0
-	cfs_b->old_period = cfs_b->period;
-	cfs_b->old_quota = cfs_b->quota;
-	cfs_b->period = ns_to_ktime(100000000ULL);
-	cfs_b->quota = ns_to_ktime(num_online_cpus() * 100000000ULL);
-#endif
+
 	return 0;
 }
 
