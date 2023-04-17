@@ -5479,8 +5479,13 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		goto period_timer_out;
 
 	if (!cfs_b->idle) {
-		cfs_b->runtime_hist[cfs_b->period_hist_idx] = cfs_b->quota - cfs_b->runtime;
-		cfs_b->period_hist[cfs_b->period_hist_idx] = cfs_b->period;
+		if (cfs_b->runtime > 0) {
+			cfs_b->runtime_hist[cfs_b->period_hist_idx] = cfs_b->quota - cfs_b->runtime;
+			cfs_b->period_hist[cfs_b->period_hist_idx] = cfs_b->period;
+		} else {
+			cfs_b->runtime_hist[cfs_b->period_hist_idx] = 0;
+			cfs_b->period_hist[cfs_b->period_hist_idx] = 0;
+		}
 		cfs_b->period_hist_idx++;
 
 		trace_printk("[PERIOD] period:%llu runtime:%llu runtime_used:%lld\n",
@@ -5532,8 +5537,14 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		  Cross multiply to indetify the best period:quota ratio
 		  Comparing 95P period dependent runtime vs median period agnostic runtime
 		*/
-		if (!P95_period || !(P95_calc_runtime + P95_idle_time) ||
-		    (P95_runtime * (P95_calc_runtime + P95_idle_time) <
+
+		if (!P95_calc_runtime || !(P95_calc_runtime + P95_idle_time)) {
+			temp_period = P95_period;
+			temp_quota = P95_runtime;
+		} else if (!P95_period || !P95_runtime) {
+			temp_period = P95_idle_time + P95_calc_runtime;
+			temp_quota = P95_calc_runtime;
+		} else if ((P95_runtime * (P95_calc_runtime + P95_idle_time) <
 		    P95_calc_runtime * P95_period)) {
 			temp_period = P95_period;
 			temp_quota = P95_runtime;
