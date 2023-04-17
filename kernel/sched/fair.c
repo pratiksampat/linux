@@ -5579,7 +5579,8 @@ period_timer_out:
 		if (cfs_b->curr_interval > cfs_b->recommender_trace_for) {
 			/* Stop tracing and restore old period and quota */
 			cfs_b->recommender_active = false;
-		} else if (cfs_b->curr_interval > cfs_b->recommender_trace_at) {
+		}
+		if (cfs_b->curr_interval > cfs_b->recommender_trace_at) {
 			/* Reset interval start tracing again */
 			cfs_b->curr_interval = 0;
 			cfs_b->recommender_active = true;
