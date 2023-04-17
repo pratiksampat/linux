@@ -5559,7 +5559,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		trace_printk("[RECOMMEND] quota:%llu period:%llu\n", cfs_b->recommender_quota, cfs_b->recommender_period);
 
 		/* Apply the recommendation */
-		if (cfs_b->recommender_status == 2) {
+		if (cfs_b->recommender_status) {
 			cfs_b->period = cfs_b->recommender_period;
 			cfs_b->quota = cfs_b->recommender_quota;
 		}
@@ -5567,6 +5567,11 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		/* Reset the history buffer */
 		cfs_b->period_hist_idx = 0;
 		cfs_b->period_agnostic_hist_idx = 0;
+
+		memset(cfs_b->period_hist, 0, cfs_b->recommender_history * sizeof(cfs_b->period_hist));
+		memset(cfs_b->runtime_hist, 0, cfs_b->recommender_history * sizeof(cfs_b->runtime_hist));
+		memset(cfs_b->idle_time_hist, 0, 20 * cfs_b->recommender_history * sizeof(cfs_b->idle_time_hist));
+		memset(cfs_b->real_runtime_hist, 0, 20 * cfs_b->recommender_history * sizeof(cfs_b->real_runtime_hist));
 	}
 
 period_timer_out:
