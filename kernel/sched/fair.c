@@ -5324,13 +5324,13 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	curr_throttle_time = rq_clock(rq) - cfs_rq->throttled_clock;
 	cfs_b->throttled_time += curr_throttle_time;
 
-	if (cfs_b->recommender_active) {
-		trace_printk("[UNTHROTTLE] curr_throttle_time:%llu\n", curr_throttle_time);
-		if (cfs_b->idle_time_start)
-			cfs_b->idle_time_start += curr_throttle_time;
-		if (cfs_b->runtime_start)
-			cfs_b->runtime_start += curr_throttle_time;
-	}
+	// if (cfs_b->recommender_active) {
+	// 	trace_printk("[UNTHROTTLE] curr_throttle_time:%llu\n", curr_throttle_time);
+	// 	if (cfs_b->idle_time_start)
+	// 		cfs_b->idle_time_start += curr_throttle_time;
+	// 	if (cfs_b->runtime_start)
+	// 		cfs_b->runtime_start += curr_throttle_time;
+	// }
 
 	list_del_rcu(&cfs_rq->throttled_list);
 	raw_spin_unlock(&cfs_b->lock);
@@ -5394,6 +5394,16 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 
 unthrottle_throttle:
 	assert_list_leaf_cfs_rq(rq);
+
+	curr_throttle_time = rq_clock(rq) - cfs_rq->throttled_clock;
+	if (cfs_b->recommender_active) {
+		trace_printk("[UNTHROTTLE] curr_throttle_time:%llu\n", curr_throttle_time);
+		if (cfs_b->idle_time_start)
+			cfs_b->idle_time_start += curr_throttle_time;
+		if (cfs_b->runtime_start)
+			cfs_b->runtime_start += curr_throttle_time;
+	}
+
 
 	/* Determine whether we need to wake up potentially idle CPU: */
 	if (rq->curr == rq->idle && rq->cfs.nr_running)
