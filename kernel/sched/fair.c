@@ -5536,26 +5536,27 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		  agnostic history (likely due to no idle durations) to make
 		  a decision otherwise.
 		*/
-		if ((P95_runtime == cfs_b->quota &&
-		    cfs_b->period_agnostic_hist_idx - 1 < 5)) {
+
+		/*
+			Cross multiply to indetify the best period:quota ratio
+			Comparing 95P period dependent runtime vs median period agnostic runtime
+		*/
+		if ((P95_runtime * (P95_calc_runtime + P95_idle_time) <
+			P95_calc_runtime * P95_period)) {
 			temp_period = P95_period;
 			temp_quota = P95_runtime;
-			trace_printk("[DEBUG] Within IF period:%llu quota%llu\n",temp_period, temp_quota);
+			trace_printk("[DEBUG] Within ELSE-IF period:%llu quota%llu\n",temp_period, temp_quota);
 		} else {
-			/*
-			  Cross multiply to indetify the best period:quota ratio
-			  Comparing 95P period dependent runtime vs median period agnostic runtime
-			*/
-			if ((P95_runtime * (P95_calc_runtime + P95_idle_time) <
-			    P95_calc_runtime * P95_period)) {
-				temp_period = P95_period;
-				temp_quota = P95_runtime;
-				trace_printk("[DEBUG] Within ELSE-IF period:%llu quota%llu\n",temp_period, temp_quota);
-			} else {
-				temp_period = P95_idle_time + P95_calc_runtime;
-				temp_quota = P95_calc_runtime;
-				trace_printk("[DEBUG] Within ELSE period:%llu quota%llu\n",temp_period, temp_quota);
-			}
+			temp_period = P95_idle_time + P95_calc_runtime;
+			temp_quota = P95_calc_runtime;
+			trace_printk("[DEBUG] Within ELSE period:%llu quota%llu\n",temp_period, temp_quota);
+		}
+
+		if (P95_runtime == cfs_b->quota &&
+		    (P95_calc_runtime != 0 || (P95_idle_time + P95_calc_runtime != 0))) {
+			temp_period = P95_idle_time + P95_calc_runtime;
+			temp_quota = P95_calc_runtime;
+			trace_printk("[DEBUG] Within IF period:%llu quota%llu\n",temp_period, temp_quota);
 		}
 
 		// if (!P95_calc_runtime || !(P95_calc_runtime + P95_idle_time)) {
