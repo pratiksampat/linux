@@ -5572,10 +5572,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		// 	temp_period = P95_idle_time + P95_calc_runtime;
 		// 	temp_quota = P95_calc_runtime;
 		// }
-		// if (temp_period && temp_quota) {
-		// 	cfs_b->recommender_period = temp_period;
-		// 	cfs_b->recommender_quota = temp_quota;
-		// }
+		if (temp_period && temp_quota) {
+			cfs_b->recommender_period = temp_period;
+			cfs_b->recommender_quota = temp_quota;
+		}
 		trace_printk("[RECOMMEND] quota:%llu period:%llu\n", cfs_b->recommender_quota, cfs_b->recommender_period);
 
 		/* Apply the recommendation */
