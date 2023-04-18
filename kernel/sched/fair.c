@@ -5542,7 +5542,8 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			Comparing 95P period dependent runtime vs median period agnostic runtime
 		*/
 		if ((P95_runtime * (P95_calc_runtime + P95_idle_time) <
-			P95_calc_runtime * P95_period)) {
+			P95_calc_runtime * P95_period) ||
+			(P95_calc_runtime == 0 || (P95_idle_time + P95_calc_runtime == 0))) {
 			temp_period = P95_period;
 			temp_quota = P95_runtime;
 			trace_printk("[DEBUG] Within ELSE-IF period:%llu quota%llu\n",temp_period, temp_quota);
