@@ -11104,22 +11104,15 @@ static int cpu_cfs_recommend_status_write_s64(struct cgroup_subsys_state *css,
 {
 	struct task_group *tg = css_tg(css);
 	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
-	u64 quota = cfs_b->quota;
 	cfs_b->recommender_status = status;
 	cfs_b->recommender_active = false;
-
-	if (cfs_b->quota == RUNTIME_INF) {
-		quota = num_online_cpus() * cfs_b->period;
-		cfs_b->recommender_period = cfs_b->period;
-		cfs_b->recommender_quota = quota;
-	}
 
 	if (!status)
 		return 0;
 
 	cfs_b->recommender_active = true;
 
-	return tg_set_cfs_bandwidth(tg, cfs_b->period, quota, cfs_b->burst);
+	return 0;
 }
 
 static ssize_t cpu_cfs_recommend_sample_write(struct kernfs_open_file *of,
