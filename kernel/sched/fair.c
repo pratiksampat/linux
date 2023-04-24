@@ -5589,6 +5589,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 
 		/* Apply the recommendation */
 		if (cfs_b->recommender_status) {
+			if (cfs_b->recommender_period < 5000000) /* If quota < 5 ms add a bit more to avoid stalls*/
+				cfs_b->recommender_period += 5000000;
+			if (cfs_b->recommender_quota < 5000000) /* If quota < 5 ms add a bit more to avoid stalls*/
+				cfs_b->recommender_quota += 5000000;
 			cfs_b->period = cfs_b->recommender_period;
 			cfs_b->quota = cfs_b->recommender_quota;
 		}
