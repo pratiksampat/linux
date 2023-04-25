@@ -5541,7 +5541,6 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			Cross multiply to indetify the best period:quota ratio
 			Comparing 95P period dependent runtime vs median period agnostic runtime
 		*/
-		cfs_b->tracing_unlimited = false;
 		if ((P95_runtime * (P95_calc_runtime + P95_idle_time) <
 			P95_calc_runtime * P95_period) ||
 			(P95_calc_runtime == 0 || (P95_idle_time + P95_calc_runtime == 0))) {
@@ -5554,17 +5553,11 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			trace_printk("[DEBUG] Within ELSE period:%llu quota%llu\n",temp_period, temp_quota);
 		}
 
-		if (P95_runtime == cfs_b->quota) {
-			if((P95_calc_runtime != 0 || (P95_idle_time + P95_calc_runtime != 0))) {
-				temp_period = P95_idle_time + P95_calc_runtime;
-				temp_quota = P95_calc_runtime;
-				trace_printk("[DEBUG] Within IF period:%llu quota%llu\n",temp_period, temp_quota);
-			} else if ((P95_calc_runtime == 0 || (P95_idle_time + P95_calc_runtime == 0))) {
-				/* Trace unlimited only if we utilize all the quota and don't have any idle time */
-				temp_period = P95_period;
-				temp_quota = P95_runtime + 10000000; // 10 ms leeway
-				cfs_b->tracing_unlimited = true;
-			}
+		if (P95_runtime == cfs_b->quota &&
+		    (P95_calc_runtime != 0 || (P95_idle_time + P95_calc_runtime != 0))) {
+			temp_period = P95_idle_time + P95_calc_runtime;
+			temp_quota = P95_calc_runtime;
+			trace_printk("[DEBUG] Within IF period:%llu quota%llu\n",temp_period, temp_quota);
 		}
 
 		// if (!P95_calc_runtime || !(P95_calc_runtime + P95_idle_time)) {
@@ -5597,14 +5590,6 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			cfs_b->quota = cfs_b->recommender_quota;
 		}
 
-		/* If unlimited tracing is disabled now but was active at some point because old_period and quota exists */
-		if (!cfs_b->tracing_unlimited && cfs_b->old_period && cfs_b->old_quota) {
-			cfs_b->period = cfs_b->old_period;
-			cfs_b->quota = cfs_b->old_quota;
-			cfs_b->old_period = 0;
-			cfs_b->old_quota = 0;
-		}
-
 		/* Reset the history buffer */
 		cfs_b->period_hist_idx = 0;
 		cfs_b->period_agnostic_hist_idx = 0;
@@ -5620,21 +5605,12 @@ period_timer_out:
 		if (cfs_b->curr_interval > cfs_b->recommender_trace_for) {
 			/* Stop tracing and restore old period and quota */
 			cfs_b->recommender_active = false;
-			cfs_b->tracing_unlimited = false;
 		}
 		if (cfs_b->curr_interval > cfs_b->recommender_trace_at) {
 			/* Reset interval start tracing again */
 			cfs_b->curr_interval = 0;
 			cfs_b->recommender_active = true;
 		}
-
-		if (cfs_b->tracing_unlimited) {
-			cfs_b->old_period = cfs_b->period;
-			cfs_b->old_quota = cfs_b->quota;
-			cfs_b->period = ns_to_ktime(default_cfs_period());
-			cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
-		}
-
 		cfs_b->curr_interval++;
 	}
 	/* Refill extra burst quota even if cfs_b->idle */
@@ -5942,7 +5918,6 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
 	cfs_b->recommender_quota = RUNTIME_INF;
 	cfs_b->recommender_history = 10;
-	cfs_b->tracing_unlimited = false;
 
 	cfs_b->runtime_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->period_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
