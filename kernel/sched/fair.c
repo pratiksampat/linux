@@ -5585,17 +5585,6 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			cfs_b->recommender_period = temp_period;
 			cfs_b->recommender_quota = temp_quota;
 		}
-		trace_printk("[RECOMMEND] quota:%llu period:%llu\n", cfs_b->recommender_quota, cfs_b->recommender_period);
-
-		/* Apply the recommendation */
-		if (cfs_b->recommender_status == 2) {
-			if (cfs_b->recommender_period < 5000000) /* If quota < 5 ms add a bit more to avoid stalls*/
-				cfs_b->recommender_period += 5000000;
-			if (cfs_b->recommender_quota < 5000000) /* If quota < 5 ms add a bit more to avoid stalls*/
-				cfs_b->recommender_quota += 5000000;
-			cfs_b->period = cfs_b->recommender_period;
-			cfs_b->quota = cfs_b->recommender_quota;
-		}
 
 		/* Reset the history buffer */
 		cfs_b->period_hist_idx = 0;
@@ -5609,14 +5598,43 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 
 period_timer_out:
 	if (cfs_b->recommender_status) {
-		if (cfs_b->curr_interval > cfs_b->recommender_trace_for) {
-			/* Stop tracing and restore old period and quota */
+		/* Greater than trace_for, less than trace_at */
+		if (cfs_b->curr_interval > cfs_b->recommender_trace_for &&
+		    cfs_b->curr_interval < cfs_b->recommender_trace_at) {
+			/* Stop tracing and apply the recommendation */
 			cfs_b->recommender_active = false;
+
+			/* Apply the recommendation */
+			if (cfs_b->recommender_status == 2) {
+				if (cfs_b->recommender_period < 5000000) /* If quota < 5 ms add a bit more to avoid stalls*/
+					cfs_b->recommender_period += 5000000;
+				if (cfs_b->recommender_quota < 5000000) /* If quota < 5 ms add a bit more to avoid stalls*/
+					cfs_b->recommender_quota += 5000000;
+				cfs_b->period = cfs_b->recommender_period;
+				cfs_b->quota = cfs_b->recommender_quota;
+			} else {
+				cfs_b->period = cfs_b->old_period;
+				cfs_b->quota = cfs_b->old_quota;
+			}
+
+			trace_printk("[RECOMMEND] quota:%llu period:%llu\n", cfs_b->recommender_quota, cfs_b->recommender_period);
+
 		}
 		if (cfs_b->curr_interval > cfs_b->recommender_trace_at) {
 			/* Reset interval start tracing again */
 			cfs_b->curr_interval = 0;
 			cfs_b->recommender_active = true;
+
+			/* Set the period and quota to unlimited for tracing */
+			/* TODO: Figure out to trace without this. Aka with throttle */
+			/*
+			  Note: quota is num_cpus * default_cfs_period to support
+			  multi-threading and essentially behave as RUNTIME_INF
+			*/
+			cfs_b->old_period = cfs_b->period;
+			cfs_b->old_quota = cfs_b->quota;
+			cfs_b->period = ns_to_ktime(default_cfs_period());
+			cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
 		}
 		cfs_b->curr_interval++;
 	}
