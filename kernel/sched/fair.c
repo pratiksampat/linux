@@ -5499,6 +5499,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		u64 P95_calc_runtime;
 		u64 temp_period;
 		u64 temp_quota;
+		u64 P10_idle_time;
 		int percentile_idx;
 
 		sort(cfs_b->period_hist, cfs_b->recommender_history, sizeof(u64), cmp_u64, NULL);
@@ -5516,6 +5517,9 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		median_idle_time = cfs_b->idle_time_hist[percentile_idx];
 		median_calc_runtime = cfs_b->real_runtime_hist[percentile_idx];
 
+		percentile_idx = DIV_ROUND_UP(10 * (cfs_b->period_agnostic_hist_idx - 2), 100);
+		P10_idle_time = cfs_b->idle_time_hist[percentile_idx];
+
 		percentile_idx = DIV_ROUND_UP(95 * (cfs_b->recommender_history - 1), 100);
 		P95_period = cfs_b->period_hist[percentile_idx];
 		P95_runtime = cfs_b->runtime_hist[percentile_idx];
@@ -5524,8 +5528,8 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		P95_idle_time = cfs_b->idle_time_hist[percentile_idx];
 		P95_calc_runtime = cfs_b->real_runtime_hist[percentile_idx];
 
-		trace_printk("[STATS] 50_period:%llu 50_runtime:%llu 50_idletime:%llu 50_calc_runtime:%llu 95_period:%llu 95_runtime:%llu 95_idletime:%llu 95_calc_runtime:%llu\n",
-			   median_period, median_runtime, median_idle_time, median_calc_runtime,
+		trace_printk("[STATS] 10_idle_time:%llu 50_period:%llu 50_runtime:%llu 50_idletime:%llu 50_calc_runtime:%llu 95_period:%llu 95_runtime:%llu 95_idletime:%llu 95_calc_runtime:%llu\n",
+			   P10_idle_time, median_period, median_runtime, median_idle_time, median_calc_runtime,
 			   P95_period, P95_runtime, P95_idle_time, P95_calc_runtime);
 
 		/*
@@ -5541,21 +5545,21 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			Cross multiply to indetify the best period:quota ratio
 			Comparing 95P period dependent runtime vs median period agnostic runtime
 		*/
-		if ((P95_runtime * (P95_calc_runtime + P95_idle_time) <
+		if ((P95_runtime * (P95_calc_runtime + median_idle_time) <
 			P95_calc_runtime * P95_period) ||
 			(P95_calc_runtime == 0 || (P95_idle_time + P95_calc_runtime == 0))) {
 			temp_period = P95_period;
 			temp_quota = P95_runtime;
 			trace_printk("[DEBUG] Within ELSE-IF period:%llu quota%llu\n",temp_period, temp_quota);
 		} else {
-			temp_period = P95_idle_time + P95_calc_runtime;
+			temp_period = median_idle_time + P95_calc_runtime;
 			temp_quota = P95_calc_runtime;
 			trace_printk("[DEBUG] Within ELSE period:%llu quota%llu\n",temp_period, temp_quota);
 		}
 
 		if (P95_runtime == cfs_b->quota &&
-		    (P95_calc_runtime != 0 || (P95_idle_time + P95_calc_runtime != 0))) {
-			temp_period = P95_idle_time + P95_calc_runtime;
+		    (P95_calc_runtime != 0 || (median_idle_time + P95_calc_runtime != 0))) {
+			temp_period = median_idle_time + P95_calc_runtime;
 			temp_quota = P95_calc_runtime;
 			trace_printk("[DEBUG] Within IF period:%llu quota%llu\n",temp_period, temp_quota);
 		}
