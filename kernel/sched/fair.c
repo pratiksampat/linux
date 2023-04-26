@@ -5025,7 +5025,8 @@ static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
 static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				   struct cfs_rq *cfs_rq, u64 target_runtime)
 {
-	u64 min_amount, amount = 0, curr_idle_time = 0, curr_runtime = 0;
+	u64 min_amount, amount = 0, curr_idle_time = 0;
+	s64 curr_runtime = 0;
 	struct rq *rq = rq_of(cfs_rq);
 	s64 diff = 0;
 
@@ -5087,13 +5088,15 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 		/* Stop tracing runtime when idle found */
 		if (cfs_b->runtime_start) {
 			curr_runtime = rq_clock(rq) - cfs_b->runtime_start - diff;
+			if (curr_runtime < 0)
+				goto reset_runtime;
 			trace_printk("[ASSIGN] runtime:%llu amount:%llu curr_runtime:%llu\n",
 				     cfs_b->runtime, amount, curr_runtime);
 			cfs_b->real_runtime_hist[cfs_b->period_agnostic_hist_idx] = curr_runtime;
 			cfs_b->period_agnostic_hist_idx++;
 			/* Wrap around if we are greater */
 			cfs_b->period_agnostic_hist_idx %= ((20 * cfs_b->recommender_history) + 1);
-
+reset_runtime:
 			/* Reset runtime */
 			cfs_b->runtime_start = 0;
 		}
