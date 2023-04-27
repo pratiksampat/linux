@@ -5533,12 +5533,6 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		P95_idle_time = cfs_b->idle_time_hist[percentile_idx];
 		P95_calc_runtime = cfs_b->real_runtime_hist[percentile_idx];
 
-		/* If throttle is the majority then set unlimited for the next tracing interval */
-		if (cfs_b->curr_throttle++ > cfs_b->recommender_history >> 1)
-			cfs_b->trace_ulim = true;
-		else
-			cfs_b->trace_ulim = false;
-
 		trace_printk("[STATS] 10_idle_time:%llu 50_period:%llu 50_runtime:%llu 50_idletime:%llu 50_calc_runtime:%llu 95_period:%llu 95_runtime:%llu 95_idletime:%llu 95_calc_runtime:%llu\n",
 			   P10_idle_time, median_period, median_runtime, median_idle_time, median_calc_runtime,
 			   P95_period, P95_runtime, P95_idle_time, P95_calc_runtime);
@@ -5589,6 +5583,18 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		// 	temp_period = P95_idle_time + P95_calc_runtime;
 		// 	temp_quota = P95_calc_runtime;
 		// }
+
+		/* If throttle is the majority then set unlimited for the next tracing interval */
+		if ((cfs_b->curr_throttle++ > cfs_b->recommender_history >> 1) &&
+		    cfs_b->recommender_period > cfs_b->period - 5000000 &&
+		    cfs_b->recommender_quota > cfs_b->quota - 5000000) {
+			cfs_b->trace_ulim = true;
+			trace_printk("[DEBUG] Unlimited quota for next period\n");
+		} else {
+			trace_printk("[DEBUG] limited quota for next period\n");
+			cfs_b->trace_ulim = false;
+		}
+
 		if (temp_period && temp_quota) {
 			cfs_b->recommender_period = temp_period;
 			cfs_b->recommender_quota = temp_quota;
@@ -5656,8 +5662,9 @@ period_timer_out:
 
 		}
 		cfs_b->curr_interval++;
-		trace_printk("[DEBUG] trace_for:%d trace_at:%d curr_interval:%d\n",
-			     cfs_b->recommender_trace_for, cfs_b->recommender_trace_at, cfs_b->curr_interval);
+		trace_printk("[DEBUG] trace_for:%d trace_at:%d curr_interval:%d period:%llu quota:%llu\n",
+			     cfs_b->recommender_trace_for, cfs_b->recommender_trace_at, cfs_b->curr_interval,
+			     cfs_b->period,cfs_b->quota);
 
 	}
 	/* Refill extra burst quota even if cfs_b->idle */
