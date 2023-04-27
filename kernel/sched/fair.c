@@ -5486,6 +5486,8 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		cfs_b->period_hist[cfs_b->period_hist_idx] = cfs_b->period;
 		cfs_b->period_hist_idx++;
 
+		cfs_b->curr_throttle++;
+
 		trace_printk("[PERIOD] period:%llu runtime:%llu runtime_used:%lld\n",
 			     cfs_b->period, cfs_b->runtime, cfs_b->quota - cfs_b->runtime);
 	}
@@ -5530,6 +5532,12 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		percentile_idx = DIV_ROUND_UP(95 * (cfs_b->period_agnostic_hist_idx - 2), 100);
 		P95_idle_time = cfs_b->idle_time_hist[percentile_idx];
 		P95_calc_runtime = cfs_b->real_runtime_hist[percentile_idx];
+
+		/* If throttle is the majority then set unlimited for the next tracing interval */
+		if (cfs_b->curr_throttle++ > cfs_b->recommender_history >> 1)
+			cfs_b->trace_ulim = true;
+		else
+			cfs_b->trace_ulim = false;
 
 		trace_printk("[STATS] 10_idle_time:%llu 50_period:%llu 50_runtime:%llu 50_idletime:%llu 50_calc_runtime:%llu 95_period:%llu 95_runtime:%llu 95_idletime:%llu 95_calc_runtime:%llu\n",
 			   P10_idle_time, median_period, median_runtime, median_idle_time, median_calc_runtime,
@@ -5589,6 +5597,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		/* Reset the history buffer */
 		cfs_b->period_hist_idx = 0;
 		cfs_b->period_agnostic_hist_idx = 0;
+		cfs_b->curr_throttle = 0;
 
 		memset(cfs_b->period_hist, 0, cfs_b->recommender_history * sizeof(cfs_b->period_hist));
 		memset(cfs_b->runtime_hist, 0, cfs_b->recommender_history * sizeof(cfs_b->runtime_hist));
@@ -5635,10 +5644,12 @@ period_timer_out:
 			  Note: quota is num_cpus * default_cfs_period to support
 			  multi-threading and essentially behave as RUNTIME_INF
 			*/
-			cfs_b->old_period = cfs_b->period;
-			cfs_b->old_quota = cfs_b->quota;
-			cfs_b->period = ns_to_ktime(default_cfs_period());
-			cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
+			if (cfs_b->trace_ulim) {
+				cfs_b->old_period = cfs_b->period;
+				cfs_b->old_quota = cfs_b->quota;
+				cfs_b->period = ns_to_ktime(default_cfs_period());
+				cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
+			}
 
 			trace_printk("[DEBUG] RESTART trace_for:%d trace_at:%d curr_interval:%d\n",
 			     cfs_b->recommender_trace_for, cfs_b->recommender_trace_at, cfs_b->curr_interval);
@@ -5954,6 +5965,8 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
 	cfs_b->recommender_quota = RUNTIME_INF;
 	cfs_b->recommender_history = 10;
+	cfs_b->curr_throttle = 0;
+	cfs_b->trace_ulim = false;
 
 	cfs_b->runtime_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->period_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
