@@ -5619,6 +5619,10 @@ period_timer_out:
 
 			trace_printk("[RECOMMEND] quota:%llu period:%llu\n", cfs_b->recommender_quota, cfs_b->recommender_period);
 
+			trace_printk("[DEBUG] SUSPEND trace_for:%d trace_at:%d curr_interval:%d\n",
+			     cfs_b->recommender_trace_for, cfs_b->recommender_trace_at, cfs_b->curr_interval);
+
+
 		}
 		if (cfs_b->curr_interval > cfs_b->recommender_trace_at) {
 			/* Reset interval start tracing again */
@@ -5635,8 +5639,15 @@ period_timer_out:
 			cfs_b->old_quota = cfs_b->quota;
 			cfs_b->period = ns_to_ktime(default_cfs_period());
 			cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
+
+			trace_printk("[DEBUG] RESTART trace_for:%d trace_at:%d curr_interval:%d\n",
+			     cfs_b->recommender_trace_for, cfs_b->recommender_trace_at, cfs_b->curr_interval);
+
 		}
 		cfs_b->curr_interval++;
+		trace_printk("[DEBUG] trace_for:%d trace_at:%d curr_interval:%d\n",
+			     cfs_b->recommender_trace_for, cfs_b->recommender_trace_at, cfs_b->curr_interval);
+
 	}
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
