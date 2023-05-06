@@ -5589,10 +5589,17 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		    cfs_b->recommender_period > cfs_b->period - 5000000 &&
 		    cfs_b->recommender_quota > cfs_b->quota - 5000000) {
 			cfs_b->trace_ulim = true;
+
+			/* Scale up the unlimited multiplier instead of giving it everything */
+			cfs_b->trace_multiplier++;
+			if (cfs_b->trace_multiplier > num_online_cpus()) {
+				cfs_b->trace_multiplier = num_online_cpus();
+			}
 			trace_printk("[DEBUG] Unlimited quota for next period\n");
 		} else {
 			trace_printk("[DEBUG] limited quota for next period\n");
 			cfs_b->trace_ulim = false;
+			cfs_b->trace_multiplier = 0;
 		}
 
 		if (temp_period && temp_quota) {
@@ -5651,10 +5658,16 @@ period_timer_out:
 			  multi-threading and essentially behave as RUNTIME_INF
 			*/
 			if (cfs_b->trace_ulim) {
+				int multiplier = cfs_b->trace_multiplier;
+
 				cfs_b->old_period = cfs_b->period;
 				cfs_b->old_quota = cfs_b->quota;
 				cfs_b->period = ns_to_ktime(default_cfs_period());
-				cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
+
+				/* Make sure we give it at least one CPU */
+				if (!multiplier)
+					multiplier = 1;
+				cfs_b->quota = ns_to_ktime(multiplier * default_cfs_period());
 			}
 
 			trace_printk("[DEBUG] RESTART trace_for:%d trace_at:%d curr_interval:%d\n",
@@ -5974,6 +5987,7 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->recommender_history = 10;
 	cfs_b->curr_throttle = 0;
 	cfs_b->trace_ulim = false;
+	cfs_b->trace_multiplier = 0;
 
 	cfs_b->runtime_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->period_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);

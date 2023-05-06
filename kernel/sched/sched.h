@@ -377,6 +377,7 @@ struct cfs_bandwidth {
 	u64			old_quota;
 	int 			curr_throttle;
 	bool			trace_ulim;
+	int			trace_multiplier;
 
 	u8			idle;
 	u8			period_active;
