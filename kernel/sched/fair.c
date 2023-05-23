@@ -5529,6 +5529,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			   P10_idle_time, median_period, median_runtime, median_idle_time, median_calc_runtime,
 			   P95_period, P95_runtime, P95_idle_time, P95_calc_runtime);
 
+#if 0
 		/*
 		  Always set to cummulative period and quota if:
 
@@ -5583,6 +5584,13 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			cfs_b->recommender_period = temp_period;
 			cfs_b->recommender_quota = temp_quota;
 		}
+#endif
+		/*
+			Experiment: To check if all the benefits are from fast
+			tuning or actually from tuning the period!
+			Always pick the 95P quoat from cummulative runtime
+		*/
+		cfs_b->recommender_quota = P95_runtime;
 
 		/* Reset the history buffer */
 		cfs_b->period_hist_idx = 0;
