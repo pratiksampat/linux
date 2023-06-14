@@ -5545,7 +5545,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		  agnostic history (likely due to no idle durations) to make
 		  a decision otherwise.
 		*/
-#if 0
+
 		/*
 			Cross multiply to indetify the best period:quota ratio
 			Comparing 95P period dependent runtime vs median period agnostic runtime
@@ -5605,32 +5605,6 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		if (temp_period && temp_quota) {
 			cfs_b->recommender_period = temp_period;
 			cfs_b->recommender_quota = temp_quota;
-		}
-#endif
-		/*
-			EXPERIMENT: to determine if the benefits we see are from
-			fast tuning or they come from tuning the period or a
-			combination of both.
-
-			In that regard, only apply recommendations from the
-			cummulative history and only tune for period and not quota
-		*/
-		cfs_b->recommender_quota = P95_runtime;
-
-		/* If throttle is the majority then set unlimited for the next tracing interval */
-		if (cfs_b->curr_throttle++ > cfs_b->recommender_history >> 1) {
-			cfs_b->trace_ulim = true;
-
-			/* Scale up the unlimited multiplier instead of giving it everything */
-			cfs_b->trace_multiplier++;
-			if (cfs_b->trace_multiplier > num_online_cpus()) {
-				cfs_b->trace_multiplier = num_online_cpus();
-			}
-			trace_printk("[DEBUG] Unlimited quota for next period\n");
-		} else {
-			trace_printk("[DEBUG] limited quota for next period\n");
-			cfs_b->trace_ulim = false;
-			cfs_b->trace_multiplier = 0;
 		}
 
 		/* Reset the history buffer */
