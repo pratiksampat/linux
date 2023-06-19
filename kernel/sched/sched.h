@@ -355,6 +355,7 @@ struct cfs_bandwidth {
 	struct hrtimer		period_timer;
 	struct hrtimer		slack_timer;
 	struct list_head	throttled_cfs_rq;
+	struct list_head	current_rq_list;
 
 	/* Statistics: */
 	int			nr_periods;
@@ -363,6 +364,12 @@ struct cfs_bandwidth {
 	u64			throttled_time;
 	u64			burst_time;
 #endif
+};
+
+struct rq_entry {
+	u64 cfs_rq_p;
+	int value; // Keep the stats here
+	struct list_head list_node;
 };
 
 /* Task group related information */
