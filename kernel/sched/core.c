@@ -11245,6 +11245,183 @@ static ssize_t cpu_max_write(struct kernfs_open_file *of,
 		ret = tg_set_cfs_bandwidth(tg, period, quota, burst);
 	return ret ?: nbytes;
 }
+
+static s64 cpu_cfs_recommend_status_read_s64(struct cgroup_subsys_state *css,
+				  struct cftype *cft)
+{
+	return css_tg(css)->cfs_bandwidth.recommender_status;
+}
+
+static int cpu_cfs_recommend_status_write_s64(struct cgroup_subsys_state *css,
+				struct cftype *cft, s64 status)
+{
+	struct task_group *tg = css_tg(css);
+	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+	cfs_b->recommender_status = status;
+	cfs_b->recommender_active = false;
+
+	if (!status)
+		return 0;
+
+	cfs_b->recommender_active = true;
+	cfs_b->trace_ulim = false;
+
+	return 0;
+}
+
+static ssize_t cpu_cfs_recommend_sample_write(struct kernfs_open_file *of,
+			     char *buf, size_t nbytes, loff_t off)
+{
+	char tok[21];	/* U64_MAX */
+	int trace_at = 0, trace_for = 0;
+	struct task_group *tg = css_tg(of_css(of));
+	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+
+	if (sscanf(buf, "%20s %d", tok, &trace_at) < 1)
+		return -EINVAL;
+
+	if (sscanf(tok, "%d", &trace_for) < 1)
+		return -EINVAL;
+
+	if (!trace_for || !trace_at || (trace_for > trace_at) ||
+		trace_for <= cfs_b->pa_recommender_history ||
+		trace_for <= cfs_b->pb_recommender_history)
+		return -EINVAL;
+
+	cfs_b->recommender_trace_for = trace_for;
+	cfs_b->recommender_trace_at = trace_at;
+
+	return nbytes;
+}
+
+static int cpu_cfs_recommend_sample_show(struct seq_file *sf, void *v)
+{
+	struct task_group *tg = css_tg(seq_css(sf));
+
+	seq_printf(sf, "%d %d\n", tg->cfs_bandwidth.recommender_trace_for,
+		   tg->cfs_bandwidth.recommender_trace_at);
+
+	return 0;
+}
+
+static ssize_t cpu_cfs_recommend_leeway_write(struct kernfs_open_file *of,
+			     char *buf, size_t nbytes, loff_t off)
+{
+	char tok[21];	/* U64_MAX */
+	u64 quota_leeway = 0, period_leeway = 0;
+	struct task_group *tg = css_tg(of_css(of));
+	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+
+	if (sscanf(buf, "%20s %llu", tok, &period_leeway) < 1)
+		return -EINVAL;
+
+	if (sscanf(tok, "%llu", &quota_leeway) < 1)
+		return -EINVAL;
+
+	cfs_b->quota_leeway = quota_leeway;
+	cfs_b->period_leeway = period_leeway;
+
+	return nbytes;
+}
+
+static int cpu_cfs_recommend_leeway_show(struct seq_file *sf, void *v)
+{
+	struct task_group *tg = css_tg(seq_css(sf));
+
+	seq_printf(sf, "%llu %llu\n", tg->cfs_bandwidth.quota_leeway,
+		   tg->cfs_bandwidth.period_leeway);
+
+	return 0;
+}
+
+
+static s64 cpu_cfs_pb_recommend_history_read_s64(struct cgroup_subsys_state *css,
+				  struct cftype *cft)
+{
+	return css_tg(css)->cfs_bandwidth.pb_recommender_history;
+}
+
+static int cpu_cfs_pb_recommend_history_write_s64(struct cgroup_subsys_state *css,
+				struct cftype *cft, s64 history)
+{
+	struct task_group *tg = css_tg(css);
+	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+	u64 *temp_pb_period_hist, *temp_pb_runtime_hist;
+
+	if (cfs_b->recommender_trace_for < history)
+		return -EINVAL;
+
+	temp_pb_runtime_hist = krealloc(cfs_b->pb_runtime_hist, history * sizeof(u64), GFP_KERNEL);
+	temp_pb_period_hist = krealloc(cfs_b->pb_period_hist, history * sizeof(u64), GFP_KERNEL);
+
+	if (temp_pb_period_hist || temp_pb_runtime_hist) {
+		cfs_b->pb_runtime_hist = temp_pb_runtime_hist;
+		cfs_b->pb_period_hist = temp_pb_period_hist;
+	} else {
+		kfree(cfs_b->pb_runtime_hist);
+		kfree(cfs_b->pb_period_hist);
+		return -ENOMEM;
+	}
+
+	cfs_b->pb_recommender_history = history;
+
+	return 0;
+}
+
+
+static s64 cpu_cfs_pa_recommend_history_read_s64(struct cgroup_subsys_state *css,
+				  struct cftype *cft)
+{
+	return css_tg(css)->cfs_bandwidth.pa_recommender_history;
+}
+
+static int cpu_cfs_pa_recommend_history_write_s64(struct cgroup_subsys_state *css,
+				struct cftype *cft, s64 history)
+{
+	struct task_group *tg = css_tg(css);
+	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+	struct rq_entry *entry;
+	u64 *temp_pa_yield_time_hist, *temp_pa_runtime_hist;
+
+	if (cfs_b->recommender_trace_for < history)
+		return -EINVAL;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
+		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
+		temp_pa_runtime_hist = krealloc(temp_cfs_rq->pa_runtime_hist, history * sizeof(u64), GFP_KERNEL);
+		temp_pa_yield_time_hist = krealloc(temp_cfs_rq->pa_yield_time_hist, history * sizeof(u64), GFP_KERNEL);
+
+		if (!temp_pa_runtime_hist || !temp_pa_yield_time_hist) {
+			return -ENOMEM;
+		} else {
+			temp_cfs_rq->pa_yield_time_hist = temp_pa_yield_time_hist;
+			temp_cfs_rq->pa_runtime_hist = temp_pa_runtime_hist;
+		}
+	}
+	rcu_read_unlock();
+
+	cfs_b->pa_recommender_history = history;
+
+	return 0;
+}
+
+static int cpu_cfs_recommend_max_show(struct seq_file *sf, void *v)
+{
+	struct task_group *tg = css_tg(seq_css(sf));
+	u64 period_us, quota_us;
+
+	period_us = tg->cfs_bandwidth.recommender_period;
+	quota_us = tg->cfs_bandwidth.recommender_quota;
+
+	do_div(period_us, NSEC_PER_USEC);
+
+	if (quota_us != RUNTIME_INF)
+		do_div(quota_us, NSEC_PER_USEC);
+
+	cpu_period_quota_print(sf, period_us, quota_us);
+	return 0;
+}
 #endif
 
 static struct cftype cpu_files[] = {
@@ -11280,6 +11457,47 @@ static struct cftype cpu_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.read_u64 = cpu_cfs_burst_read_u64,
 		.write_u64 = cpu_cfs_burst_write_u64,
+	},
+	/* Status -> 0 = off, 1 = manual mode (only recommend) , 2 = auto mode (recommend and apply) */
+	{
+		.name = "recommend.status",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_s64 = cpu_cfs_recommend_status_read_s64,
+		.write_s64 = cpu_cfs_recommend_status_write_s64,
+	},
+	/* Sampling interval when to take measurements <trace_for> <trace_at> in periods */
+	{
+		.name = "recommend.tracing_interval",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpu_cfs_recommend_sample_show,
+		.write = cpu_cfs_recommend_sample_write,
+	},
+	/* [DEBUGGING] Dynamically add period and quota leeways */
+	{
+		.name = "recommend.leeway",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpu_cfs_recommend_leeway_show,
+		.write = cpu_cfs_recommend_leeway_write,
+	},
+	/* Recommend history size for period bound tracing */
+	{
+		.name = "recommend.period_bound_history",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_s64 = cpu_cfs_pb_recommend_history_read_s64,
+		.write_s64 = cpu_cfs_pb_recommend_history_write_s64,
+	},
+	/* Recommend history size for period agnostic tracing */
+	{
+		.name = "recommend.period_agnostic_history",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_s64 = cpu_cfs_pa_recommend_history_read_s64,
+		.write_s64 = cpu_cfs_pa_recommend_history_write_s64,
+	},
+	/* Recommended period, quota value */
+	{
+		.name = "recommend.max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpu_cfs_recommend_max_show,
 	},
 #endif
 #ifdef CONFIG_UCLAMP_TASK_GROUP

@@ -355,6 +355,51 @@ struct cfs_bandwidth {
 	struct hrtimer		period_timer;
 	struct hrtimer		slack_timer;
 	struct list_head	throttled_cfs_rq;
+	struct list_head	current_rq_list;
+
+	/* Recommender interface */
+	/* Status -> 0 = off, 1 = manual mode (only recommend) , 2 = auto mode (recommend and apply) */
+	int			recommender_status;
+	/*
+	  Sampling interval when to take measurements
+	  Eg: Trace for 50 periods at every 100 periods
+	*/
+	int			recommender_trace_for;
+	int			recommender_trace_at;
+	/* How large or small the history window must be */
+	int			pa_recommender_history;
+	int			pb_recommender_history;
+	/* Leeways */
+	u64			period_leeway;
+	u64			quota_leeway;
+	/* Recommendations from the algorithm */
+	u64			pa_recommender_period;
+	u64			pa_recommender_quota;
+	u64			max_pa_recommender_period;
+	u64			max_pa_recommender_quota;
+	u64			max_cumulative_millicpu;
+	u64			pb_recommender_period;
+	u64			pb_recommender_quota;
+	u64			recommender_period;
+	u64			recommender_quota;
+
+	/* Period Bound tracing */
+	int			pb_hist_idx;
+	u64			*pb_period_hist;
+	u64			*pb_runtime_hist;
+	u64			pb_millicpu;
+	u64         max_ratio;
+
+	/* Recommender interface helpers */
+	bool			recommender_active;
+	int			curr_interval;
+	u64			old_period;
+	u64			old_quota;
+	int 			curr_throttle;
+	bool			trace_ulim;
+	int			trace_multiplier;
+	u64			cumulative_millicpu;
+	int			num_cfs_rq;
 
 	/* Statistics: */
 	int			nr_periods;
@@ -363,6 +408,12 @@ struct cfs_bandwidth {
 	u64			throttled_time;
 	u64			burst_time;
 #endif
+};
+
+struct rq_entry {
+	u64 cfs_rq_p;
+	int value; // Keep the stats here
+	struct list_head list_node;
 };
 
 /* Task group related information */
@@ -636,6 +687,21 @@ struct cfs_rq {
 	s64			runtime_remaining;
 
 	u64			throttled_pelt_idle;
+
+	/* Period agnostic Tracing */
+	u64			yield_time_start;
+	u64			runtime_start;
+	u64			prev_runtime_amount;
+
+	u64			P95_runtime;
+	u64			P95_yield_time;
+	u64			millicpu;
+
+	bool			reco_applied;
+
+	int			pa_hist_idx;
+	u64			*pa_yield_time_hist;
+	u64			*pa_runtime_hist;
 #ifndef CONFIG_64BIT
 	u64                     throttled_pelt_idle_copy;
 #endif

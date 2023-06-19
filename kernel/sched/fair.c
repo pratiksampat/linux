@@ -52,6 +52,8 @@
 
 #include <linux/sched/cond_resched.h>
 
+#include <linux/sort.h>
+
 #include "sched.h"
 #include "stats.h"
 #include "autogroup.h"
@@ -3211,9 +3213,18 @@ static inline void update_scan_period(struct task_struct *p, int new_cpu)
 
 #endif /* CONFIG_NUMA_BALANCING */
 
+static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
+{
+	return &tg->cfs_bandwidth;
+}
+
 static void
 account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
+	struct rq_entry *entry;
+	bool found = false;
+
 	update_load_add(&cfs_rq->load, se->load.weight);
 #ifdef CONFIG_SMP
 	if (entity_is_task(se)) {
@@ -3224,13 +3235,99 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	}
 #endif
 	cfs_rq->nr_running++;
-	if (se_is_idle(se))
+	if (se_is_idle(se)) {
 		cfs_rq->idle_nr_running++;
+		return;
+	}
+	if (cfs_b == NULL || !cfs_b->recommender_active)
+		return;
+
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
+		if (entry->cfs_rq_p == (u64) cfs_rq) {
+			found = true;
+			break;
+		}
+	}
+	rcu_read_unlock();
+
+	if (found)
+		return;
+
+	entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
+	entry->cfs_rq_p = (u64) cfs_rq;
+	INIT_LIST_HEAD(&entry->list_node);
+
+	raw_spin_lock(&cfs_b->lock);
+	list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
+	cfs_b->num_cfs_rq++;
+#if 1
+	if (cfs_rq->P95_runtime && cfs_rq->P95_yield_time) {
+
+		if (cfs_b->num_cfs_rq == 1) {
+			cfs_b->pa_recommender_quota = cfs_rq->P95_runtime + cfs_b->quota_leeway;
+			cfs_b->cumulative_millicpu = cfs_rq->millicpu;
+		} else {
+			cfs_b->pa_recommender_quota += cfs_rq->P95_runtime + cfs_b->quota_leeway;
+			cfs_b->cumulative_millicpu += cfs_rq->millicpu;
+		}
+
+		if (cfs_b->cumulative_millicpu)
+			cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
+
+		cfs_rq->reco_applied = true;
+
+		if (cfs_b->pa_recommender_period && cfs_b->pa_recommender_quota) {
+			if (cfs_b->cumulative_millicpu > cfs_b->max_cumulative_millicpu) {
+				cfs_b->max_pa_recommender_quota = cfs_b->pa_recommender_quota;
+				cfs_b->max_pa_recommender_period = cfs_b->pa_recommender_period;
+				cfs_b->max_cumulative_millicpu = cfs_b->cumulative_millicpu;
+			}
+		}
+
+		if (cfs_b->max_cumulative_millicpu) {
+			cfs_b->pa_recommender_quota = cfs_b->max_pa_recommender_quota;
+			cfs_b->pa_recommender_period = cfs_b->max_pa_recommender_period;
+			cfs_b->cumulative_millicpu = cfs_b->max_cumulative_millicpu;
+		}
+
+#if 0
+		cfs_b->recommender_period = cfs_b->pa_recommender_period;
+		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+
+		if (cfs_b->recommender_period && cfs_b->recommender_quota) {
+			if ((s64) (cfs_b->recommender_period - cfs_b->period_leeway) > 0)
+				cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
+			else
+				cfs_b->period = cfs_b->recommender_period;
+
+			cfs_b->quota = cfs_b->recommender_quota;
+		}
+#endif
+
+#if 1
+		trace_printk("[ENQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu cum_cpu:%lld\n",
+				cfs_b->num_cfs_rq,
+				(u64) cfs_rq,
+				cfs_rq->P95_runtime,
+				cfs_rq->P95_yield_time,
+				cfs_b->pa_recommender_quota,
+				cfs_b->pa_recommender_period,
+				cfs_b->cumulative_millicpu);
+#endif
+	}
+#endif
+
+	raw_spin_unlock(&cfs_b->lock);
 }
 
 static void
 account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
+	struct rq_entry *entry, *temp_entry;
+
 	update_load_sub(&cfs_rq->load, se->load.weight);
 #ifdef CONFIG_SMP
 	if (entity_is_task(se)) {
@@ -3239,8 +3336,65 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	}
 #endif
 	cfs_rq->nr_running--;
-	if (se_is_idle(se))
+	if (se_is_idle(se)) {
 		cfs_rq->idle_nr_running--;
+		return ;
+	}
+	if (cfs_b == NULL || !cfs_b->recommender_active)
+		return;
+
+#if 0
+	raw_spin_lock(&cfs_b->lock);
+	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+		if (entry->cfs_rq_p == (u64) cfs_rq) {
+#if 1
+			if (cfs_rq->reco_applied) {
+				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - cfs_b->quota_leeway) > 5000000)
+					cfs_b->pa_recommender_quota = cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - cfs_b->quota_leeway;
+				if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 5000)
+					cfs_b->cumulative_millicpu -= cfs_rq->millicpu;
+				if (cfs_b->cumulative_millicpu)
+					cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
+			}
+
+#if 0
+			if (cfs_b->pa_recommender_quota && cfs_b->pa_recommender_period) {
+				cfs_b->recommender_period = cfs_b->pa_recommender_period;
+				cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+
+				if (cfs_b->recommender_period && cfs_b->recommender_quota) {
+					if ((s64) (cfs_b->recommender_period - cfs_b->period_leeway) > 0)
+						cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
+					else
+						cfs_b->period = cfs_b->recommender_period;
+					cfs_b->quota = cfs_b->recommender_quota;
+				}
+#endif
+
+#if 1
+				trace_printk("[DEQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d cum_cpu:%lld\n",
+					cfs_b->num_cfs_rq,
+					(u64) cfs_rq,
+					cfs_rq->P95_runtime,
+					cfs_rq->P95_yield_time,
+					cfs_b->pa_recommender_quota,
+					cfs_b->pa_recommender_period,
+					cfs_rq->reco_applied,
+					cfs_b->cumulative_millicpu);
+#endif
+#if 0
+			}
+#endif
+			cfs_rq->reco_applied = false;
+#endif
+			list_del(&entry->list_node);
+			kfree(entry);
+			cfs_b->num_cfs_rq--;
+			break;
+		}
+	}
+	raw_spin_unlock(&cfs_b->lock);
+#endif
 }
 
 /*
@@ -5206,33 +5360,226 @@ void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b)
 	cfs_b->runtime_snap = cfs_b->runtime;
 }
 
-static inline struct cfs_bandwidth *tg_cfs_bandwidth(struct task_group *tg)
+static int cmp_u64(const void *A, const void *B)
 {
-	return &tg->cfs_bandwidth;
+	const u64 *a = A, *b = B;
+
+	return *a - *b;
 }
 
 /* returns 0 on failure to allocate runtime */
 static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				   struct cfs_rq *cfs_rq, u64 target_runtime)
 {
-	u64 min_amount, amount = 0;
+	s64 corr_yeild_time, corr_runtime;
+	struct rq *rq = rq_of(cfs_rq);
+	u64 min_amount, amount = 0, curr_yeild_time;
+	bool legitimate_yeild = false;
+	struct rq_entry *entry;
+	int percentile_idx, num_rqs = 0;
+	u64 min_yeild, min_runtime;
 
 	lockdep_assert_held(&cfs_b->lock);
 
 	/* note: this is a positive sum as runtime_remaining <= 0 */
 	min_amount = target_runtime - cfs_rq->runtime_remaining;
 
-	if (cfs_b->quota == RUNTIME_INF)
+	if (cfs_b->quota == RUNTIME_INF) {
 		amount = min_amount;
-	else {
-		start_cfs_bandwidth(cfs_b);
-
-		if (cfs_b->runtime > 0) {
-			amount = min(cfs_b->runtime, min_amount);
-			cfs_b->runtime -= amount;
-			cfs_b->idle = 0;
-		}
+		goto assign_out;
 	}
+
+	start_cfs_bandwidth(cfs_b);
+	if (cfs_b->runtime <= 0)
+		goto assign_out;
+
+	amount = min(cfs_b->runtime, min_amount);
+	cfs_b->runtime -= amount;
+	cfs_b->idle = 0;
+
+	if (!cfs_b->recommender_active)
+		goto assign_out;
+
+	/*
+	   Period agnostic tracing
+	   We want to trace the runtime of a runqueue and do not want
+	   to be limited by the cummulative cfs_b->runtime accounted
+	   for within a period.
+
+	   We want account for runtime per runqueue until the
+	   queue yeilds. However, the problem is that the queue can
+	   yeild for a reasons such as expiry of the
+	   sched_cfs_bandwidth_slice or yeild due to quota throttle
+
+	   Therefore we account for runtime when our yeild duration
+	   is greater than the bandwidth slice. This even applies to
+	   throttled runqueues - we just have to account for the time
+	   it was throttled and apply the correction factor
+
+	   The only downside of this approach is that if the queue
+	   requires 100% of the CPU then we will never find a legitimate
+	   idle duration and therefore no period agnostic runtime as
+	   well. In that case, maybe it could be wise to utilize
+	   period bound tracing
+	*/
+
+	if (cfs_rq->yield_time_start) {
+		curr_yeild_time = rq_clock(rq) - cfs_rq->yield_time_start;
+	}
+	/*
+	   As the clock keeps ticking from the moment it is queued
+	   Therefore the actual yeild time will have to deduct the
+	   amount it has already run for
+	*/
+	corr_yeild_time = curr_yeild_time - cfs_rq->prev_runtime_amount;
+
+	// trace_printk("[DEBUG] cfs_rq: 0x%llx curr_yeild: %lld corr_yeild: %lld target_runtime:%llu\n",
+		//     (u64) cfs_rq, curr_yeild_time, corr_yeild_time, target_runtime);
+
+	/* Found a legitimate self-yeild */
+	if (curr_yeild_time && cfs_rq->runtime_start &&
+	    corr_yeild_time > (s64) target_runtime) {
+		cfs_rq->pa_hist_idx %= cfs_b->pa_recommender_history;
+		cfs_rq->pa_yield_time_hist[cfs_rq->pa_hist_idx] = corr_yeild_time;
+		corr_runtime = rq_clock(rq) - cfs_rq->runtime_start - corr_yeild_time;
+		if (corr_runtime < 0)
+			goto reset_runtime;
+
+		cfs_rq->pa_runtime_hist[cfs_rq->pa_hist_idx] = corr_runtime;
+#if 0
+		trace_printk("[ASSIGN] cfs_rq: 0x%llx yeild_time:%llu runtime:%llu\n",
+			     (u64) cfs_rq, corr_yeild_time, corr_runtime);
+#endif
+		/* Wrap around array index */
+		cfs_rq->pa_hist_idx++;
+reset_runtime:
+		cfs_rq->runtime_start = 0;
+		legitimate_yeild = true;
+	}
+
+	/*
+	   Reprime the clocks
+	   Yeild clock: Always reprimed
+	   Runtime clock: Only reprimed if its the first time or
+	   the clock was reset when runtime was found
+	*/
+	cfs_rq->yield_time_start = rq_clock(rq);
+	if (!cfs_rq->runtime_start)
+		cfs_rq->runtime_start = rq_clock(rq);
+
+	cfs_rq->prev_runtime_amount = amount;
+
+	/* Recommendation */
+	if (cfs_rq->pa_hist_idx < cfs_b->pa_recommender_history || !legitimate_yeild)
+		goto assign_out;
+
+	cfs_b->pa_recommender_quota = 0;
+	cfs_b->pa_recommender_period = 0;
+	min_yeild = INT_MAX;
+	min_runtime = INT_MAX;
+	cfs_b->cumulative_millicpu = 0;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
+		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
+
+		/* Find 99P of yeild and runtime for each runqueue maybe add it back to the queue itself */
+		if (temp_cfs_rq->pa_hist_idx <= 0)
+			continue;
+		sort(temp_cfs_rq->pa_yield_time_hist, temp_cfs_rq->pa_hist_idx , sizeof(u64), cmp_u64, NULL);
+		sort(temp_cfs_rq->pa_runtime_hist, temp_cfs_rq->pa_hist_idx , sizeof(u64), cmp_u64, NULL);
+
+		percentile_idx = DIV_ROUND_UP(99 * (temp_cfs_rq->pa_hist_idx - 2), 100);
+		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
+		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
+
+		if (temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time) {
+			temp_cfs_rq->millicpu = DIV_ROUND_UP_ULL((temp_cfs_rq->P95_runtime + cfs_b->quota_leeway)* 100000, temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time);
+			cfs_b->cumulative_millicpu += temp_cfs_rq->millicpu;
+		}
+
+		// min_yeild = temp_cfs_rq->P95_yield_time;
+		// min_runtime = temp_cfs_rq->P95_runtime;
+
+		/* Add up all the runtimes */
+		cfs_b->pa_recommender_quota += temp_cfs_rq->P95_runtime + cfs_b->quota_leeway;
+		if (min_yeild > temp_cfs_rq->P95_yield_time)
+			min_yeild = temp_cfs_rq->P95_yield_time;
+		if (min_runtime > temp_cfs_rq->P95_runtime)
+			min_runtime = temp_cfs_rq->P95_runtime;
+
+#if 0
+		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu vcpu:%llu\n",
+			     (u64) temp_cfs_rq,
+			     temp_cfs_rq->P95_runtime,
+			     temp_cfs_rq->P95_yield_time,
+			     min_runtime, min_yeild, temp_cfs_rq->millicpu);
+#endif
+		num_rqs++;
+		cfs_rq->reco_applied = true;
+	}
+
+	// cfs_b->pa_recommender_quota = 0;
+	// cfs_b->pa_recommender_period = 0;
+
+	// list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
+	// 	struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
+
+	// 	/* Add up all the runtimes */
+	// 	cfs_b->pa_recommender_quota += temp_cfs_rq->P95_runtime;
+
+	// 	if (min_yeild > temp_cfs_rq->P95_yield_time)
+	// 		min_yeild = temp_cfs_rq->P95_yield_time;
+	// 	if (min_runtime > temp_cfs_rq->P95_runtime)
+	// 		min_runtime = temp_cfs_rq->P95_runtime;
+	// 	trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu\n",
+	// 		     (u64) temp_cfs_rq,
+	// 		     temp_cfs_rq->P95_runtime,
+	// 		     temp_cfs_rq->P95_yield_time,
+	// 		     min_runtime, min_yeild);
+	// 	num_rqs++;
+	// }
+	rcu_read_unlock();
+
+	/* Shortest period possible - worst case scenario*/
+	// cfs_b->pa_recommender_period = min_runtime + min_yeild;
+
+	if (cfs_b->cumulative_millicpu)
+		cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
+
+	trace_printk("[RECOMMEND PA] rqs: %d Agnostic quota: %llu period: %llu millicpu: %llu\n",
+		     num_rqs, cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period, cfs_b->cumulative_millicpu);
+
+	if (cfs_b->cumulative_millicpu > cfs_b->max_cumulative_millicpu) {
+		cfs_b->max_pa_recommender_quota = cfs_b->pa_recommender_quota;
+		cfs_b->max_pa_recommender_period = cfs_b->pa_recommender_period;
+		cfs_b->max_cumulative_millicpu = cfs_b->cumulative_millicpu;
+	}
+
+	if (cfs_b->max_cumulative_millicpu) {
+		cfs_b->pa_recommender_quota = cfs_b->max_pa_recommender_quota;
+		cfs_b->pa_recommender_period = cfs_b->max_pa_recommender_period;
+		cfs_b->cumulative_millicpu = cfs_b->max_cumulative_millicpu;
+	}
+#if 0
+	cfs_b->recommender_period = cfs_b->pa_recommender_period;
+	cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+
+	if (cfs_b->recommender_period && cfs_b->recommender_quota) {
+		if ((s64) (cfs_b->recommender_period - cfs_b->period_leeway) > 0)
+			cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
+		else
+			cfs_b->period = cfs_b->recommender_period;
+
+		cfs_b->quota = cfs_b->recommender_quota;
+	}
+#endif
+#if 1
+	trace_printk("[RECOMMEND] rqs: %d Agnostic quota: %llu period: %llu millicpu: %llu\n",
+		     num_rqs, cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period, cfs_b->cumulative_millicpu);
+#endif
+
+assign_out:
 
 	cfs_rq->runtime_remaining += amount;
 
@@ -5433,6 +5780,7 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
 	struct sched_entity *se;
 	long task_delta, idle_task_delta;
+	u64 curr_throttle_time;
 
 	se = cfs_rq->tg->se[cpu_of(rq)];
 
@@ -5441,9 +5789,23 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	update_rq_clock(rq);
 
 	raw_spin_lock(&cfs_b->lock);
-	cfs_b->throttled_time += rq_clock(rq) - cfs_rq->throttled_clock;
+	curr_throttle_time = rq_clock(rq) - cfs_rq->throttled_clock;
+	cfs_b->throttled_time += curr_throttle_time;
+
 	list_del_rcu(&cfs_rq->throttled_list);
 	raw_spin_unlock(&cfs_b->lock);
+
+	/* Apply the throttle correction to wind the clock forward */
+	if (cfs_b->recommender_active) {
+		if (cfs_rq->yield_time_start)
+			cfs_rq->yield_time_start += curr_throttle_time;
+		if (cfs_rq->runtime_start)
+			cfs_rq->runtime_start += curr_throttle_time;
+#if 0
+		trace_printk("[UNTHROTTLE] cfs_rq: 0x%llx throttle_time:%llu\n",
+			     (u64) cfs_rq, curr_throttle_time);
+#endif
+	}
 
 	/* update hierarchical throttle state */
 	walk_tg_tree_from(cfs_rq->tg, tg_nop, tg_unthrottle_up, (void *)rq);
@@ -5648,6 +6010,35 @@ next:
 	return throttled;
 }
 
+bool similar(u64 n1, u64 n2) {
+	u64 n3 = 0;
+
+	if (n1 > n2) {
+		n3 = n1 - n2;
+	} else {
+		n3 = n2 - n1;
+	}
+
+	if (n3 < 10000000)
+		return true;
+	return false;
+}
+
+bool similar_millicpu(u64 n1, u64 n2) {
+	u64 n3 = 0;
+
+	if (n1 > n2) {
+		n3 = n1 - n2;
+	} else {
+		n3 = n2 - n1;
+	}
+
+	if (n3 < 25000)
+		return true;
+	return false;
+}
+
+
 /*
  * Responsible for refilling a task_group's bandwidth and unthrottling its
  * cfs_rqs as appropriate. If there has been no activity within the last
@@ -5657,6 +6048,8 @@ next:
 static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, unsigned long flags)
 {
 	int throttled;
+	int percentile_idx = 0;
+	struct rq_entry *entry, *temp_entry;
 
 	/* no need to continue the timer with no bandwidth constraint */
 	if (cfs_b->quota == RUNTIME_INF)
@@ -5664,6 +6057,149 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 
 	throttled = !list_empty(&cfs_b->throttled_cfs_rq);
 	cfs_b->nr_periods += overrun;
+
+	/*
+	   Period bound tracing - Trace the amount of runtime used
+	   within a period.
+
+	   Q: Why is this needed when we already have period agnostic
+	      tracing which is supposed to be more accurate?
+
+	   A: Sometimes, period bound tracing may not be able to get
+	   runtime, either due to high amounts of throttle or if all the
+	   quota is consumed.
+	   Also, in some cases when different threads overlap, it can
+	   so happen that the overlap is very small and the amount of
+	   resources requested for certain periods is lower. In such
+	   cases we can request for lower number of resources as well.
+	*/
+
+	if (!cfs_b->recommender_active)
+		goto period_timer_out;
+
+	if (!cfs_b->idle) {
+		cfs_b->pb_runtime_hist[cfs_b->pb_hist_idx] = cfs_b->quota - cfs_b->runtime;
+		cfs_b->pb_period_hist[cfs_b->pb_hist_idx] = cfs_b->period;
+		cfs_b->pb_hist_idx++;
+
+		if (throttled) {
+			cfs_b->curr_throttle++;
+		}
+	}
+
+	if (cfs_b->pb_hist_idx < cfs_b->pb_recommender_history)
+		goto period_timer_out;
+
+	/* Period bound recommendation */
+	sort(cfs_b->pb_runtime_hist, cfs_b->pb_recommender_history, sizeof(u64), cmp_u64, NULL);
+	sort(cfs_b->pb_period_hist, cfs_b->pb_recommender_history, sizeof(u64), cmp_u64, NULL);
+	percentile_idx = DIV_ROUND_UP(99 * (cfs_b->pb_recommender_history - 1), 100);
+	cfs_b->pb_recommender_quota = cfs_b->pb_runtime_hist[percentile_idx];
+	cfs_b->pb_recommender_period = cfs_b->pb_period_hist[percentile_idx];
+	cfs_b->pb_millicpu = DIV_ROUND_UP_ULL(cfs_b->pb_recommender_quota * 100000, cfs_b->pb_recommender_period);
+
+	trace_printk("[RECOMMEND BOUND] quota: %llu period: %llu millicpu: %llu\n",
+			cfs_b->pb_recommender_quota, cfs_b->pb_recommender_period, cfs_b->pb_millicpu);
+
+	/* Apply the recommendation */
+	cfs_b->recommender_period = cfs_b->pb_recommender_period;
+	cfs_b->recommender_quota = cfs_b->pb_recommender_quota;
+	if (cfs_b->pb_millicpu && cfs_b->max_cumulative_millicpu) {
+		if (cfs_b->pb_millicpu > cfs_b->max_cumulative_millicpu ||
+			similar_millicpu(cfs_b->pb_millicpu, cfs_b->max_cumulative_millicpu)) {
+			cfs_b->recommender_period = cfs_b->max_pa_recommender_period;
+			cfs_b->recommender_quota = cfs_b->max_pa_recommender_quota;
+		}
+		/* If the quota is similar (5-7ms), choose the one with higher period */
+		if (similar(cfs_b->pb_recommender_quota, cfs_b->max_pa_recommender_quota)) {
+			if (cfs_b->max_pa_recommender_period > cfs_b->pb_recommender_period)
+				cfs_b->recommender_period = cfs_b->max_pa_recommender_period;
+			else
+				cfs_b->recommender_period = cfs_b->pb_recommender_period;
+		}
+	} else if (cfs_b->cumulative_millicpu) {
+		cfs_b->recommender_period = cfs_b->pa_recommender_period;
+		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+	}
+	/* If period / quota < 5 ms add a bit more to avoid stalls */
+	if (cfs_b->recommender_period < 5000000)
+		cfs_b->recommender_period += 5000000;
+	if (cfs_b->recommender_quota < 5000000)
+		cfs_b->recommender_quota += 5000000;
+
+	/* Give higher quota if more than half of history is throttled */
+	if (cfs_b->curr_throttle >= cfs_b->pa_recommender_history) {
+		cfs_b->trace_ulim = true;
+	}
+
+	if (cfs_b->recommender_period && cfs_b->recommender_quota && !cfs_b->trace_ulim){
+		if (cfs_b->recommender_status == 2) {
+			cfs_b->period = cfs_b->recommender_period;
+			cfs_b->quota = cfs_b->recommender_quota;
+		}
+	}
+	trace_printk("[FINAL] quota: %llu period: %llu\n", cfs_b->quota, cfs_b->period);
+
+	/* Clear the list after every few periods */
+	raw_spin_unlock_irqrestore(&cfs_b->lock, flags);
+	raw_spin_lock(&cfs_b->lock);
+	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+			list_del(&entry->list_node);
+			kfree(entry);
+	}
+	raw_spin_unlock(&cfs_b->lock);
+	raw_spin_lock_irqsave(&cfs_b->lock, flags);
+
+	cfs_b->pb_hist_idx = 0;
+	cfs_b->curr_throttle = 0;
+	cfs_b->max_cumulative_millicpu = 0;
+	cfs_b->max_pa_recommender_quota = 0;
+	cfs_b->max_pa_recommender_period = 0;
+	cfs_b->pa_recommender_quota = 0;
+	cfs_b->pa_recommender_period = 0;
+	cfs_b->num_cfs_rq = 0;
+	memset(cfs_b->pb_period_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_period_hist));
+	memset(cfs_b->pb_runtime_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_runtime_hist));
+
+period_timer_out:
+	/*
+	  Stop tracing, give more entitlement and wait for the workload
+	  to stablize - Default 10 periods
+	  TODO: Update to scale multiple CPUs
+	*/
+	if (cfs_b->trace_ulim) {
+		cfs_b->curr_interval++;
+
+		if (cfs_b->curr_interval < 10) {
+			cfs_b->recommender_active = false;
+			if (throttled && cfs_b->curr_interval > 1)
+				cfs_b->max_ratio = min((unsigned long long)num_online_cpus() * 100000, cfs_b->max_ratio * 2);
+			if (cfs_b->recommender_status == 2) {
+				cfs_b->period = ns_to_ktime(default_cfs_period());
+				cfs_b->quota = cfs_b->period * cfs_b->max_ratio / 100000;
+			}
+			trace_printk("[ULIM] quota: %llu period: %llu curr_interval:%d\n",
+					cfs_b->quota, cfs_b->period, cfs_b->curr_interval);
+		} else {
+			struct rq_entry *entry, *temp_entry;
+			cfs_b->curr_interval = 0;
+			cfs_b->trace_ulim = false;
+			cfs_b->recommender_active = true;
+			cfs_b->num_cfs_rq = 0;
+			cfs_b->cumulative_millicpu = 0;
+
+			raw_spin_unlock_irqrestore(&cfs_b->lock, flags);
+			raw_spin_lock(&cfs_b->lock);
+			list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+					list_del(&entry->list_node);
+					kfree(entry);
+			}
+			raw_spin_unlock(&cfs_b->lock);
+			raw_spin_lock_irqsave(&cfs_b->lock, flags);
+
+		}
+	}
+
 
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
@@ -5956,7 +6492,33 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->period = ns_to_ktime(default_cfs_period());
 	cfs_b->burst = 0;
 
+	cfs_b->recommender_status = 0;
+	cfs_b->recommender_trace_for = 50;
+	cfs_b->recommender_trace_at = 100;
+	cfs_b->pa_recommender_history = 5;
+	cfs_b->pb_recommender_history = 5;
+
+	cfs_b->pa_recommender_period = 0;
+	cfs_b->pa_recommender_quota = 0;
+	cfs_b->pb_recommender_period = 0;
+	cfs_b->pb_recommender_quota = 0;
+	cfs_b->cumulative_millicpu = 0;
+	cfs_b->num_cfs_rq = 0;
+	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
+	cfs_b->recommender_quota = RUNTIME_INF;
+
+	/* DEBUG Add dynamic leeways */
+	cfs_b->period_leeway = 0;
+	cfs_b->quota_leeway = 0;
+
+	cfs_b->pb_hist_idx = 0;
+	cfs_b->pb_runtime_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->pb_period_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->pb_millicpu = 0;
+	cfs_b->max_ratio = 100000;
+
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
+	INIT_LIST_HEAD(&cfs_b->current_rq_list);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
 	cfs_b->period_timer.function = sched_cfs_period_timer;
 	hrtimer_init(&cfs_b->slack_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -5966,11 +6528,21 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 
 static void init_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 {
+	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
+
 	cfs_rq->runtime_enabled = 0;
 	INIT_LIST_HEAD(&cfs_rq->throttled_list);
 #ifdef CONFIG_SMP
 	INIT_LIST_HEAD(&cfs_rq->throttled_csd_list);
 #endif
+	cfs_rq->pa_hist_idx = 0;
+	cfs_rq->yield_time_start = 0;
+	cfs_rq->runtime_start = 0;
+	cfs_rq->prev_runtime_amount = 0;
+	cfs_rq->millicpu = 0;
+	cfs_rq->reco_applied = false;
+	cfs_rq->pa_yield_time_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_rq->pa_runtime_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
 }
 
 void start_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
@@ -5995,6 +6567,8 @@ static void destroy_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 
 	hrtimer_cancel(&cfs_b->period_timer);
 	hrtimer_cancel(&cfs_b->slack_timer);
+	kfree(cfs_b->pb_runtime_hist);
+	kfree(cfs_b->pb_period_hist);
 
 	/*
 	 * It is possible that we still have some cfs_rq's pending on a CSD
@@ -12275,8 +12849,11 @@ void free_fair_sched_group(struct task_group *tg)
 	int i;
 
 	for_each_possible_cpu(i) {
-		if (tg->cfs_rq)
+		if (tg->cfs_rq) {
+			kfree(tg->cfs_rq[i]->pa_runtime_hist);
+			kfree(tg->cfs_rq[i]->pa_yield_time_hist);
 			kfree(tg->cfs_rq[i]);
+		}
 		if (tg->se)
 			kfree(tg->se[i]);
 	}
