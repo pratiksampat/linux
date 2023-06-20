@@ -5244,7 +5244,9 @@ void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b)
 static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				   struct cfs_rq *cfs_rq, u64 target_runtime)
 {
-	u64 min_amount, amount = 0;
+	s64 corr_yeild_time, corr_runtime;
+	struct rq *rq = rq_of(cfs_rq);
+	u64 min_amount, amount = 0, curr_yeild_time;
 
 	lockdep_assert_held(&cfs_b->lock);
 
@@ -5263,6 +5265,76 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	amount = min(cfs_b->runtime, min_amount);
 	cfs_b->runtime -= amount;
 	cfs_b->idle = 0;
+
+	if (!cfs_b->recommender_active)
+		goto assign_out;
+
+	/*
+	   Period agnostic tracing
+	   We want to trace the runtime of a runqueue and do not want
+	   to be limited by the cummulative cfs_b->runtime accounted
+	   for within a period.
+
+	   We want account for runtime per runqueue until the
+	   queue yeilds. However, the problem is that the queue can
+	   yeild for a reasons such as expiry of the
+	   sched_cfs_bandwidth_slice or yeild due to quota throttle
+
+	   Therefore we account for runtime when our yeild duration
+	   is greater than the bandwidth slice. This even applies to
+	   throttled runqueues - we just have to account for the time
+	   it was throttled and apply the correction factor
+
+	   The only downside of this approach is that if the queue
+	   requires 100% of the CPU then we will never find a legitimate
+	   idle duration and therefore no period agnostic runtime as
+	   well. In that case, maybe it could be wise to utilize
+	   period bound tracing
+	*/
+
+	if (cfs_rq->yield_time_start) {
+		curr_yeild_time = rq_clock(rq) - cfs_rq->yield_time_start;
+	}
+	/*
+	   As the clock keeps ticking from the moment it is queued
+	   Therefore the actual yeild time will have to deduct the
+	   amount it has already run for
+	*/
+	corr_yeild_time = curr_yeild_time - cfs_rq->prev_runtime_amount;
+
+	// trace_printk("[DEBUG] cfs_rq: 0x%llx curr_yeild: %lld corr_yeild: %lld target_runtime:%llu\n",
+		//     (u64) cfs_rq, curr_yeild_time, corr_yeild_time, target_runtime);
+
+	/* Found a legitimate self-yeild */
+	if (curr_yeild_time && cfs_rq->runtime_start &&
+	    corr_yeild_time > (s64) target_runtime) {
+		cfs_rq->pa_yield_time_hist[cfs_rq->pa_hist_idx] = corr_yeild_time;
+		corr_runtime = rq_clock(rq) - cfs_rq->runtime_start - corr_yeild_time;
+		if (corr_runtime < 0)
+			goto reset_runtime;
+
+		cfs_rq->pa_runtime_hist[cfs_rq->pa_hist_idx] = corr_runtime;
+		cfs_rq->pa_hist_idx++;
+
+		trace_printk("[ASSIGN] cfs_rq: 0x%llx yeild_time:%llu runtime:%llu\n",
+			     (u64) cfs_rq, corr_yeild_time, corr_runtime);
+		/* Wrap around array index */
+		cfs_rq->pa_hist_idx %= ((20 * cfs_b->recommender_history) + 1);
+reset_runtime:
+		cfs_rq->runtime_start = 0;
+	}
+
+	/*
+	   Reprime the clocks
+	   Yeild clock: Always reprimed
+	   Runtime clock: Only reprimed if its the first time or
+	   the clock was reset when runtime was found
+	*/
+	cfs_rq->yield_time_start = rq_clock(rq);
+	if (!cfs_rq->runtime_start)
+		cfs_rq->runtime_start = rq_clock(rq);
+
+	cfs_rq->prev_runtime_amount = amount;
 
 assign_out:
 
@@ -5465,6 +5537,7 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
 	struct sched_entity *se;
 	long task_delta, idle_task_delta;
+	u64 curr_throttle_time;
 
 	se = cfs_rq->tg->se[cpu_of(rq)];
 
@@ -5473,9 +5546,21 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 	update_rq_clock(rq);
 
 	raw_spin_lock(&cfs_b->lock);
-	cfs_b->throttled_time += rq_clock(rq) - cfs_rq->throttled_clock;
+	curr_throttle_time = rq_clock(rq) - cfs_rq->throttled_clock;
+	cfs_b->throttled_time += curr_throttle_time;
+
 	list_del_rcu(&cfs_rq->throttled_list);
 	raw_spin_unlock(&cfs_b->lock);
+
+	/* Apply the throttle correction to wind the clock forward */
+	if (cfs_b->recommender_active) {
+		if (cfs_rq->yield_time_start)
+			cfs_rq->yield_time_start += curr_throttle_time;
+		if (cfs_rq->runtime_start)
+			cfs_rq->runtime_start += curr_throttle_time;
+		trace_printk("[UNTHROTTLE] cfs_rq: 0x%llx throttle_time:%llu\n",
+			     (u64) cfs_rq, curr_throttle_time);
+	}
 
 	/* update hierarchical throttle state */
 	walk_tg_tree_from(cfs_rq->tg, tg_nop, tg_unthrottle_up, (void *)rq);
