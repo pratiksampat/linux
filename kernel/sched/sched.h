@@ -357,6 +357,35 @@ struct cfs_bandwidth {
 	struct list_head	throttled_cfs_rq;
 	struct list_head	current_rq_list;
 
+	/* Recommender interface */
+	/* Status -> 0 = off, 1 = manual mode (only recommend) , 2 = auto mode (recommend and apply) */
+	int			recommender_status;
+	/*
+	  Sampling interval when to take measurements
+	  Eg: Trace for 50 periods at every 100 periods
+	*/
+	int			recommender_trace_for;
+	int			recommender_trace_at;
+	/* How large or small the history window must be */
+	int			recommender_history;
+	/* Recommendations from the algorithm */
+	u64			recommender_period;
+	u64			recommender_quota;
+
+	/* Period Bound tracing */
+	int			pb_hist_idx;
+	u64			*pb_period_hist;
+	u64			*pb_runtime_hist;
+
+	/* Recommender interface helpers */
+	bool			recommender_active;
+	int			curr_interval;
+	u64			old_period;
+	u64			old_quota;
+	int 			curr_throttle;
+	bool			trace_ulim;
+	int			trace_multiplier;
+
 	/* Statistics: */
 	int			nr_periods;
 	int			nr_throttled;
@@ -643,6 +672,15 @@ struct cfs_rq {
 	s64			runtime_remaining;
 
 	u64			throttled_pelt_idle;
+
+	/* Period agnostic Tracing */
+	u64			yield_time_start;
+	u64			runtime_start;
+	u64			prev_runtime_amount;
+
+	int			pa_hist_idx;
+	u64			*pa_yield_time_hist;
+	u64			*pa_runtime_hist;
 #ifndef CONFIG_64BIT
 	u64                     throttled_pelt_idle_copy;
 #endif

@@ -5995,6 +5995,17 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->period = ns_to_ktime(default_cfs_period());
 	cfs_b->burst = 0;
 
+	cfs_b->recommender_status = 0;
+	cfs_b->recommender_trace_for = 50;
+	cfs_b->recommender_trace_at = 100;
+	cfs_b->recommender_history = 10;
+	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
+	cfs_b->recommender_quota = RUNTIME_INF;
+
+	cfs_b->pb_hist_idx = 0;
+	cfs_b->pb_runtime_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->pb_period_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	INIT_LIST_HEAD(&cfs_b->current_rq_list);
 	hrtimer_init(&cfs_b->period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
@@ -6006,11 +6017,19 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 
 static void init_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 {
+	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
+
 	cfs_rq->runtime_enabled = 0;
 	INIT_LIST_HEAD(&cfs_rq->throttled_list);
 #ifdef CONFIG_SMP
 	INIT_LIST_HEAD(&cfs_rq->throttled_csd_list);
 #endif
+	cfs_rq->pa_hist_idx = 0;
+	cfs_rq->yield_time_start = 0;
+	cfs_rq->runtime_start = 0;
+	cfs_rq->prev_runtime_amount = 0;
+	cfs_rq->pa_yield_time_hist = kmalloc(20 * cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_rq->pa_runtime_hist = kmalloc(20 * cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
 }
 
 void start_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
