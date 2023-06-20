@@ -5251,17 +5251,20 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	/* note: this is a positive sum as runtime_remaining <= 0 */
 	min_amount = target_runtime - cfs_rq->runtime_remaining;
 
-	if (cfs_b->quota == RUNTIME_INF)
+	if (cfs_b->quota == RUNTIME_INF) {
 		amount = min_amount;
-	else {
-		start_cfs_bandwidth(cfs_b);
-
-		if (cfs_b->runtime > 0) {
-			amount = min(cfs_b->runtime, min_amount);
-			cfs_b->runtime -= amount;
-			cfs_b->idle = 0;
-		}
+		goto assign_out;
 	}
+
+	start_cfs_bandwidth(cfs_b);
+	if (cfs_b->runtime <= 0)
+		goto assign_out;
+
+	amount = min(cfs_b->runtime, min_amount);
+	cfs_b->runtime -= amount;
+	cfs_b->idle = 0;
+
+assign_out:
 
 	cfs_rq->runtime_remaining += amount;
 
