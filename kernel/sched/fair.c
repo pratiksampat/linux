@@ -5319,7 +5319,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 		trace_printk("[ASSIGN] cfs_rq: 0x%llx yeild_time:%llu runtime:%llu\n",
 			     (u64) cfs_rq, corr_yeild_time, corr_runtime);
 		/* Wrap around array index */
-		cfs_rq->pa_hist_idx %= ((20 * cfs_b->recommender_history) + 1);
+		cfs_rq->pa_hist_idx %= ((cfs_b->pa_recommender_history) + 1);
 reset_runtime:
 		cfs_rq->runtime_start = 0;
 	}
@@ -6086,13 +6086,19 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->recommender_status = 0;
 	cfs_b->recommender_trace_for = 50;
 	cfs_b->recommender_trace_at = 100;
-	cfs_b->recommender_history = 10;
+	cfs_b->pa_recommender_history = 5;
+	cfs_b->pb_recommender_history = 5;
+
+	cfs_b->pa_recommender_period = 0;
+	cfs_b->pa_recommender_quota = 0;
+	cfs_b->pb_recommender_period = 0;
+	cfs_b->pb_recommender_quota = 0;
 	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
 	cfs_b->recommender_quota = RUNTIME_INF;
 
 	cfs_b->pb_hist_idx = 0;
-	cfs_b->pb_runtime_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
-	cfs_b->pb_period_hist = kmalloc(cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->pb_runtime_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->pb_period_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	INIT_LIST_HEAD(&cfs_b->current_rq_list);
@@ -6116,8 +6122,8 @@ static void init_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 	cfs_rq->yield_time_start = 0;
 	cfs_rq->runtime_start = 0;
 	cfs_rq->prev_runtime_amount = 0;
-	cfs_rq->pa_yield_time_hist = kmalloc(20 * cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
-	cfs_rq->pa_runtime_hist = kmalloc(20 * cfs_b->recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_rq->pa_yield_time_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_rq->pa_runtime_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
 }
 
 void start_cfs_bandwidth(struct cfs_bandwidth *cfs_b)

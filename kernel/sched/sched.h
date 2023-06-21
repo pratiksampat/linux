@@ -367,8 +367,13 @@ struct cfs_bandwidth {
 	int			recommender_trace_for;
 	int			recommender_trace_at;
 	/* How large or small the history window must be */
-	int			recommender_history;
+	int			pa_recommender_history;
+	int			pb_recommender_history;
 	/* Recommendations from the algorithm */
+	u64			pa_recommender_period;
+	u64			pa_recommender_quota;
+	u64			pb_recommender_period;
+	u64			pb_recommender_quota;
 	u64			recommender_period;
 	u64			recommender_quota;
 
