@@ -52,6 +52,8 @@
 
 #include <linux/sched/cond_resched.h>
 
+#include <linux/sort.h>
+
 #include "sched.h"
 #include "stats.h"
 #include "autogroup.h"
@@ -5240,6 +5242,13 @@ void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b)
 	cfs_b->runtime_snap = cfs_b->runtime;
 }
 
+static int cmp_u64(const void *A, const void *B)
+{
+	const u64 *a = A, *b = B;
+
+	return *a - *b;
+}
+
 /* returns 0 on failure to allocate runtime */
 static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 				   struct cfs_rq *cfs_rq, u64 target_runtime)
@@ -5247,6 +5256,10 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	s64 corr_yeild_time, corr_runtime;
 	struct rq *rq = rq_of(cfs_rq);
 	u64 min_amount, amount = 0, curr_yeild_time;
+	bool legitimate_yeild = false;
+	struct rq_entry *entry;
+	int percentile_idx;
+	u64 min_yeild, min_runtime;
 
 	lockdep_assert_held(&cfs_b->lock);
 
@@ -5322,6 +5335,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 		cfs_rq->pa_hist_idx %= ((cfs_b->pa_recommender_history) + 1);
 reset_runtime:
 		cfs_rq->runtime_start = 0;
+		legitimate_yeild = true;
 	}
 
 	/*
@@ -5335,6 +5349,52 @@ reset_runtime:
 		cfs_rq->runtime_start = rq_clock(rq);
 
 	cfs_rq->prev_runtime_amount = amount;
+
+	/* Recommendation */
+	if (cfs_rq->pa_hist_idx < cfs_b->pa_recommender_history || !legitimate_yeild)
+		goto assign_out;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
+		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
+
+		/* Find 99P of yeild and runtime for each runqueue maybe add it back to the queue itself */
+		if (temp_cfs_rq->pa_hist_idx - 1 <= 0)
+			continue;
+		sort(temp_cfs_rq->pa_yield_time_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+		sort(temp_cfs_rq->pa_runtime_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+
+		percentile_idx = DIV_ROUND_UP(99 * (temp_cfs_rq->pa_hist_idx - 2), 100);
+		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
+		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
+
+		min_yeild = temp_cfs_rq->P95_yield_time;
+		min_runtime = temp_cfs_rq->P95_runtime;
+		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu\n",
+			     (u64) temp_cfs_rq, temp_cfs_rq->P95_runtime, temp_cfs_rq->P95_yield_time);
+	}
+
+	cfs_b->pa_recommender_quota = 0;
+	cfs_b->pa_recommender_period = 0;
+
+	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
+		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
+
+		/* Add up all the runtimes */
+		cfs_b->pa_recommender_quota += temp_cfs_rq->P95_runtime;
+
+		if (min_yeild > temp_cfs_rq->P95_yield_time)
+			min_yeild = temp_cfs_rq->P95_yield_time;
+		if (min_runtime > temp_cfs_rq->P95_runtime)
+			min_runtime = temp_cfs_rq->P95_runtime;
+	}
+	rcu_read_unlock();
+
+	/* Shortest period possible - worst case scenario*/
+	cfs_b->pa_recommender_period = min_runtime + min_yeild;
+
+	trace_printk("[RECOMMEND] Agnostic quota:%llu period:%llu\n",
+		     cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period);
 
 assign_out:
 

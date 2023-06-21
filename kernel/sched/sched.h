@@ -683,6 +683,9 @@ struct cfs_rq {
 	u64			runtime_start;
 	u64			prev_runtime_amount;
 
+	u64			P95_runtime;
+	u64			P95_yield_time;
+
 	int			pa_hist_idx;
 	u64			*pa_yield_time_hist;
 	u64			*pa_runtime_hist;
