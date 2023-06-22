@@ -5258,7 +5258,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	u64 min_amount, amount = 0, curr_yeild_time;
 	bool legitimate_yeild = false;
 	struct rq_entry *entry;
-	int percentile_idx;
+	int percentile_idx, num_rqs = 0;
 	u64 min_yeild, min_runtime;
 
 	lockdep_assert_held(&cfs_b->lock);
@@ -5370,8 +5370,6 @@ reset_runtime:
 
 		min_yeild = temp_cfs_rq->P95_yield_time;
 		min_runtime = temp_cfs_rq->P95_runtime;
-		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu\n",
-			     (u64) temp_cfs_rq, temp_cfs_rq->P95_runtime, temp_cfs_rq->P95_yield_time);
 	}
 
 	cfs_b->pa_recommender_quota = 0;
@@ -5387,14 +5385,20 @@ reset_runtime:
 			min_yeild = temp_cfs_rq->P95_yield_time;
 		if (min_runtime > temp_cfs_rq->P95_runtime)
 			min_runtime = temp_cfs_rq->P95_runtime;
+		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu\n",
+			     (u64) temp_cfs_rq,
+			     temp_cfs_rq->P95_runtime,
+			     temp_cfs_rq->P95_yield_time,
+			     min_runtime, min_yeild);
+		num_rqs++;
 	}
 	rcu_read_unlock();
 
 	/* Shortest period possible - worst case scenario*/
 	cfs_b->pa_recommender_period = min_runtime + min_yeild;
 
-	trace_printk("[RECOMMEND] Agnostic quota:%llu period:%llu\n",
-		     cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period);
+	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
+		     num_rqs, cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period);
 
 assign_out:
 
