@@ -3236,16 +3236,30 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	cfs_rq->nr_running++;
 	if (se_is_idle(se)) {
 		cfs_rq->idle_nr_running++;
-	} else {
-		if (cfs_b == NULL)
-			return;
-		raw_spin_lock(&cfs_b->lock);
-		entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
-		entry->cfs_rq_p = (u64) cfs_rq;
-		INIT_LIST_HEAD(&entry->list_node);
-		list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
-		raw_spin_unlock(&cfs_b->lock);
+		return;
 	}
+	if (cfs_b == NULL || cfs_b->recommender_status == 0)
+		return;
+
+	raw_spin_lock(&cfs_b->lock);
+	entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
+	entry->cfs_rq_p = (u64) cfs_rq;
+	INIT_LIST_HEAD(&entry->list_node);
+	list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
+
+	if (cfs_rq->P95_runtime && cfs_rq->P95_yield_time) {
+		cfs_b->pa_recommender_quota += cfs_rq->P95_runtime;
+		cfs_rq->reco_applied = true;
+
+		trace_printk("[ENQUEUE] cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu\n",
+				(u64) cfs_rq,
+				cfs_rq->P95_runtime,
+				cfs_rq->P95_yield_time,
+				cfs_b->pa_recommender_quota,
+				cfs_b->pa_recommender_period);
+	}
+
+	raw_spin_unlock(&cfs_b->lock);
 }
 
 static void
@@ -3264,19 +3278,36 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	cfs_rq->nr_running--;
 	if (se_is_idle(se)) {
 		cfs_rq->idle_nr_running--;
-	} else {
-		if (cfs_b == NULL)
-			return;
-		raw_spin_lock(&cfs_b->lock);
-		list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
-			if (entry->cfs_rq_p == (u64) cfs_rq) {
-				list_del(&entry->list_node);
-				kfree(entry);
-				break;
-			}
-		}
-		raw_spin_unlock(&cfs_b->lock);
+		return ;
 	}
+	if (cfs_b == NULL || cfs_b->recommender_status == 0)
+		return;
+
+	raw_spin_lock(&cfs_b->lock);
+	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+		if (entry->cfs_rq_p == (u64) cfs_rq) {
+
+			if (cfs_rq->reco_applied)
+				cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime;
+
+			if (cfs_b->pa_recommender_quota && cfs_b->pa_recommender_period) {
+				trace_printk("[DEQUEUE] cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d\n",
+					(u64) cfs_rq,
+					cfs_rq->P95_runtime,
+					cfs_rq->P95_yield_time,
+					cfs_b->pa_recommender_quota,
+					cfs_b->pa_recommender_period,
+					cfs_rq->reco_applied);
+			}
+
+			cfs_rq->reco_applied = false;
+
+			list_del(&entry->list_node);
+			kfree(entry);
+			break;
+		}
+	}
+	raw_spin_unlock(&cfs_b->lock);
 }
 
 /*
@@ -5388,6 +5419,7 @@ reset_runtime:
 			     temp_cfs_rq->P95_yield_time,
 			     min_runtime, min_yeild);
 		num_rqs++;
+		cfs_rq->reco_applied = true;
 	}
 
 	// cfs_b->pa_recommender_quota = 0;
@@ -6204,6 +6236,7 @@ static void init_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 	cfs_rq->yield_time_start = 0;
 	cfs_rq->runtime_start = 0;
 	cfs_rq->prev_runtime_amount = 0;
+	cfs_rq->reco_applied = false;
 	cfs_rq->pa_yield_time_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_rq->pa_runtime_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
 }

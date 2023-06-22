@@ -686,6 +686,8 @@ struct cfs_rq {
 	u64			P95_runtime;
 	u64			P95_yield_time;
 
+	bool			reco_applied;
+
 	int			pa_hist_idx;
 	u64			*pa_yield_time_hist;
 	u64			*pa_runtime_hist;
