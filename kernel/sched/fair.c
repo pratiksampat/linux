@@ -3222,7 +3222,7 @@ static void
 account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
-	struct rq_entry *entry;
+	struct rq_entry *entry, *temp_entry;
 
 	update_load_add(&cfs_rq->load, se->load.weight);
 #ifdef CONFIG_SMP
@@ -3240,10 +3240,19 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		if (cfs_b == NULL)
 			return;
 		raw_spin_lock(&cfs_b->lock);
+
+		list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+			/* Do not add to the list if already there */
+			if (entry->cfs_rq_p == (u64) cfs_rq) {
+				goto out;
+			}
+		}
 		entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
 		entry->cfs_rq_p = (u64) cfs_rq;
+		entry->age = 0;
 		INIT_LIST_HEAD(&entry->list_node);
 		list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
+out:
 		raw_spin_unlock(&cfs_b->lock);
 	}
 }
@@ -3269,10 +3278,15 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			return;
 		raw_spin_lock(&cfs_b->lock);
 		list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+			/* Delete lazy as the same rq can be brought back */
 			if (entry->cfs_rq_p == (u64) cfs_rq) {
-				list_del(&entry->list_node);
-				kfree(entry);
-				break;
+				if (entry->age >= 3) {
+					list_del(&entry->list_node);
+					kfree(entry);
+					break;
+				} else {
+					entry->age++;
+				}
 			}
 		}
 		raw_spin_unlock(&cfs_b->lock);
@@ -5382,11 +5396,15 @@ reset_runtime:
 			min_yeild = temp_cfs_rq->P95_yield_time;
 		if (min_runtime > temp_cfs_rq->P95_runtime)
 			min_runtime = temp_cfs_rq->P95_runtime;
-		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu\n",
+		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu age:%d\n",
 			     (u64) temp_cfs_rq,
 			     temp_cfs_rq->P95_runtime,
 			     temp_cfs_rq->P95_yield_time,
-			     min_runtime, min_yeild);
+			     min_runtime, min_yeild,
+			     entry->age);
+
+		/* De-age the rq entry as it was just accessed */
+		entry->age = 0;
 		num_rqs++;
 	}
 

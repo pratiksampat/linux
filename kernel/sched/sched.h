@@ -402,7 +402,7 @@ struct cfs_bandwidth {
 
 struct rq_entry {
 	u64 cfs_rq_p;
-	int value; // Keep the stats here
+	int age;
 	struct list_head list_node;
 };
 
