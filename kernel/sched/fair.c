@@ -5368,6 +5368,10 @@ reset_runtime:
 		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
 		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
 
+		trace_printk("[DEBUG] cfs_rq: 0x%llx idx:%d size: %d\n runtime_val: %llu",
+			     (u64) temp_cfs_rq, percentile_idx,
+			     temp_cfs_rq->pa_hist_idx - 1,
+			     temp_cfs_rq->pa_runtime_hist[percentile_idx]);
 		min_yeild = temp_cfs_rq->P95_yield_time;
 		min_runtime = temp_cfs_rq->P95_runtime;
 	}
