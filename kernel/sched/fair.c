@@ -5354,6 +5354,11 @@ reset_runtime:
 	if (cfs_rq->pa_hist_idx < cfs_b->pa_recommender_history || !legitimate_yeild)
 		goto assign_out;
 
+	cfs_b->pa_recommender_quota = 0;
+	cfs_b->pa_recommender_period = 0;
+	min_yeild = INT_MAX;
+	min_runtime = INT_MAX;
+
 	rcu_read_lock();
 	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
 		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
@@ -5368,23 +5373,11 @@ reset_runtime:
 		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
 		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
 
-		trace_printk("[DEBUG] cfs_rq: 0x%llx idx:%d size: %d\n runtime_val: %llu",
-			     (u64) temp_cfs_rq, percentile_idx,
-			     temp_cfs_rq->pa_hist_idx - 1,
-			     temp_cfs_rq->pa_runtime_hist[percentile_idx]);
-		min_yeild = temp_cfs_rq->P95_yield_time;
-		min_runtime = temp_cfs_rq->P95_runtime;
-	}
-
-	cfs_b->pa_recommender_quota = 0;
-	cfs_b->pa_recommender_period = 0;
-
-	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
-		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
+		// min_yeild = temp_cfs_rq->P95_yield_time;
+		// min_runtime = temp_cfs_rq->P95_runtime;
 
 		/* Add up all the runtimes */
 		cfs_b->pa_recommender_quota += temp_cfs_rq->P95_runtime;
-
 		if (min_yeild > temp_cfs_rq->P95_yield_time)
 			min_yeild = temp_cfs_rq->P95_yield_time;
 		if (min_runtime > temp_cfs_rq->P95_runtime)
@@ -5396,6 +5389,27 @@ reset_runtime:
 			     min_runtime, min_yeild);
 		num_rqs++;
 	}
+
+	// cfs_b->pa_recommender_quota = 0;
+	// cfs_b->pa_recommender_period = 0;
+
+	// list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
+	// 	struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
+
+	// 	/* Add up all the runtimes */
+	// 	cfs_b->pa_recommender_quota += temp_cfs_rq->P95_runtime;
+
+	// 	if (min_yeild > temp_cfs_rq->P95_yield_time)
+	// 		min_yeild = temp_cfs_rq->P95_yield_time;
+	// 	if (min_runtime > temp_cfs_rq->P95_runtime)
+	// 		min_runtime = temp_cfs_rq->P95_runtime;
+	// 	trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu\n",
+	// 		     (u64) temp_cfs_rq,
+	// 		     temp_cfs_rq->P95_runtime,
+	// 		     temp_cfs_rq->P95_yield_time,
+	// 		     min_runtime, min_yeild);
+	// 	num_rqs++;
+	// }
 	rcu_read_unlock();
 
 	/* Shortest period possible - worst case scenario*/
