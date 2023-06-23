@@ -390,6 +390,7 @@ struct cfs_bandwidth {
 	int 			curr_throttle;
 	bool			trace_ulim;
 	int			trace_multiplier;
+	u64			cumulative_millicpu;
 
 	/* Statistics: */
 	int			nr_periods;

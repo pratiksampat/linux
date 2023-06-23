@@ -3249,6 +3249,10 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 
 	if (cfs_rq->P95_runtime && cfs_rq->P95_yield_time) {
 		cfs_b->pa_recommender_quota += cfs_rq->P95_runtime;
+		cfs_b->cumulative_millicpu += cfs_rq->millicpu;
+		if (cfs_b->cumulative_millicpu)
+			cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
+
 		cfs_rq->reco_applied = true;
 
 		trace_printk("[ENQUEUE] cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu\n",
@@ -3287,8 +3291,14 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
 
-			if (cfs_rq->reco_applied)
-				cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime;
+			if (cfs_rq->reco_applied) {
+				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime) > 0)
+					cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime;
+				if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 0)
+					cfs_b->cumulative_millicpu -= cfs_rq->millicpu;
+				if (cfs_b->cumulative_millicpu)
+					cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
+			}
 
 			if (cfs_b->pa_recommender_quota && cfs_b->pa_recommender_period) {
 				trace_printk("[DEQUEUE] cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d\n",
@@ -5389,6 +5399,7 @@ reset_runtime:
 	cfs_b->pa_recommender_period = 0;
 	min_yeild = INT_MAX;
 	min_runtime = INT_MAX;
+	cfs_b->cumulative_millicpu = 0;
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
@@ -5405,6 +5416,7 @@ reset_runtime:
 		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
 
 		temp_cfs_rq->millicpu = DIV_ROUND_UP_ULL(temp_cfs_rq->P95_runtime * 100000, temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time);
+		cfs_b->cumulative_millicpu += temp_cfs_rq->millicpu;
 
 		// min_yeild = temp_cfs_rq->P95_yield_time;
 		// min_runtime = temp_cfs_rq->P95_runtime;
@@ -5447,7 +5459,9 @@ reset_runtime:
 	rcu_read_unlock();
 
 	/* Shortest period possible - worst case scenario*/
-	cfs_b->pa_recommender_period = min_runtime + min_yeild;
+	// cfs_b->pa_recommender_period = min_runtime + min_yeild;
+
+	cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
 
 	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
 		     num_rqs, cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period);
@@ -6209,6 +6223,7 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->pa_recommender_quota = 0;
 	cfs_b->pb_recommender_period = 0;
 	cfs_b->pb_recommender_quota = 0;
+	cfs_b->cumulative_millicpu = 0;
 	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
 	cfs_b->recommender_quota = RUNTIME_INF;
 
@@ -6238,6 +6253,7 @@ static void init_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 	cfs_rq->yield_time_start = 0;
 	cfs_rq->runtime_start = 0;
 	cfs_rq->prev_runtime_amount = 0;
+	cfs_rq->millicpu = 0;
 	cfs_rq->reco_applied = false;
 	cfs_rq->pa_yield_time_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_rq->pa_runtime_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
