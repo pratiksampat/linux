@@ -685,6 +685,7 @@ struct cfs_rq {
 
 	u64			P95_runtime;
 	u64			P95_yield_time;
+	u64			millicpu;
 
 	bool			reco_applied;
 

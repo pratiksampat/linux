@@ -5404,6 +5404,8 @@ reset_runtime:
 		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
 		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
 
+		temp_cfs_rq->millicpu = DIV_ROUND_UP_ULL(temp_cfs_rq->P95_runtime * 100000, temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time);
+
 		// min_yeild = temp_cfs_rq->P95_yield_time;
 		// min_runtime = temp_cfs_rq->P95_runtime;
 
@@ -5413,11 +5415,11 @@ reset_runtime:
 			min_yeild = temp_cfs_rq->P95_yield_time;
 		if (min_runtime > temp_cfs_rq->P95_runtime)
 			min_runtime = temp_cfs_rq->P95_runtime;
-		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu\n",
+		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu vcpu:%llu\n",
 			     (u64) temp_cfs_rq,
 			     temp_cfs_rq->P95_runtime,
 			     temp_cfs_rq->P95_yield_time,
-			     min_runtime, min_yeild);
+			     min_runtime, min_yeild, temp_cfs_rq->millicpu);
 		num_rqs++;
 		cfs_rq->reco_applied = true;
 	}
