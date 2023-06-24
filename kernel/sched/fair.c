@@ -3246,7 +3246,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	entry->cfs_rq_p = (u64) cfs_rq;
 	INIT_LIST_HEAD(&entry->list_node);
 	list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
-
+	cfs_b->num_cfs_rq++;
 	if (cfs_rq->P95_runtime && cfs_rq->P95_yield_time) {
 		cfs_b->pa_recommender_quota += cfs_rq->P95_runtime;
 		cfs_b->cumulative_millicpu += cfs_rq->millicpu;
@@ -3255,7 +3255,8 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 
 		cfs_rq->reco_applied = true;
 
-		trace_printk("[ENQUEUE] cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu\n",
+		trace_printk("[ENQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu\n",
+				cfs_b->num_cfs_rq,
 				(u64) cfs_rq,
 				cfs_rq->P95_runtime,
 				cfs_rq->P95_yield_time,
@@ -3290,7 +3291,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	raw_spin_lock(&cfs_b->lock);
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
-
+			cfs_b->num_cfs_rq--;
 			if (cfs_rq->reco_applied) {
 				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime) > 0)
 					cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime;
@@ -3301,7 +3302,8 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			}
 
 			if (cfs_b->pa_recommender_quota && cfs_b->pa_recommender_period) {
-				trace_printk("[DEQUEUE] cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d\n",
+				trace_printk("[DEQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d\n",
+					cfs_b->num_cfs_rq,
 					(u64) cfs_rq,
 					cfs_rq->P95_runtime,
 					cfs_rq->P95_yield_time,
@@ -6224,6 +6226,7 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->pb_recommender_period = 0;
 	cfs_b->pb_recommender_quota = 0;
 	cfs_b->cumulative_millicpu = 0;
+	cfs_b->num_cfs_rq = 0;
 	cfs_b->recommender_period = ns_to_ktime(default_cfs_period());;
 	cfs_b->recommender_quota = RUNTIME_INF;
 
