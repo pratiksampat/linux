@@ -3255,6 +3255,12 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 
 		cfs_rq->reco_applied = true;
 
+		cfs_b->recommender_period = cfs_b->pa_recommender_period;
+		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+
+		cfs_b->period = cfs_b->recommender_period;
+		cfs_b->quota = cfs_b->recommender_quota;
+
 		trace_printk("[ENQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu\n",
 				cfs_b->num_cfs_rq,
 				(u64) cfs_rq,
@@ -3302,6 +3308,12 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			}
 
 			if (cfs_b->pa_recommender_quota && cfs_b->pa_recommender_period) {
+				cfs_b->recommender_period = cfs_b->pa_recommender_period;
+				cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+
+				cfs_b->period = cfs_b->recommender_period;
+				cfs_b->quota = cfs_b->recommender_quota;
+
 				trace_printk("[DEQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d\n",
 					cfs_b->num_cfs_rq,
 					(u64) cfs_rq,
@@ -5429,6 +5441,12 @@ reset_runtime:
 			min_yeild = temp_cfs_rq->P95_yield_time;
 		if (min_runtime > temp_cfs_rq->P95_runtime)
 			min_runtime = temp_cfs_rq->P95_runtime;
+
+		cfs_b->recommender_period = cfs_b->pa_recommender_period;
+		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+
+		cfs_b->period = cfs_b->recommender_period;
+		cfs_b->quota = cfs_b->recommender_quota;
 		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu vcpu:%llu\n",
 			     (u64) temp_cfs_rq,
 			     temp_cfs_rq->P95_runtime,
