@@ -3264,13 +3264,14 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			cfs_b->quota = cfs_b->recommender_quota;
 		}
 
-		trace_printk("[ENQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu\n",
+		trace_printk("[ENQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu cum_cpu:%lld\n",
 				cfs_b->num_cfs_rq,
 				(u64) cfs_rq,
 				cfs_rq->P95_runtime,
 				cfs_rq->P95_yield_time,
 				cfs_b->quota,
-				cfs_b->period);
+				cfs_b->period,
+				cfs_b->cumulative_millicpu);
 	}
 
 	raw_spin_unlock(&cfs_b->lock);
@@ -3303,7 +3304,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			if (cfs_rq->reco_applied) {
 				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime) > 5000000)
 					cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime;
-				if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 5000000)
+				if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 5000)
 					cfs_b->cumulative_millicpu -= cfs_rq->millicpu;
 				if (cfs_b->cumulative_millicpu)
 					cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
@@ -3318,14 +3319,15 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 					cfs_b->quota = cfs_b->recommender_quota;
 				}
 
-				trace_printk("[DEQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d\n",
+				trace_printk("[DEQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d cum_cpu:%lld\n",
 					cfs_b->num_cfs_rq,
 					(u64) cfs_rq,
 					cfs_rq->P95_runtime,
 					cfs_rq->P95_yield_time,
 					cfs_b->quota,
 					cfs_b->period,
-					cfs_rq->reco_applied);
+					cfs_rq->reco_applied,
+					cfs_b->cumulative_millicpu);
 			}
 
 			cfs_rq->reco_applied = false;
