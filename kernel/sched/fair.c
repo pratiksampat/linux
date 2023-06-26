@@ -3299,9 +3299,9 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
 			cfs_b->num_cfs_rq--;
 			if (cfs_rq->reco_applied) {
-				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime) > 0)
+				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime) > 5000000)
 					cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime;
-				if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 0)
+				if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 5000000)
 					cfs_b->cumulative_millicpu -= cfs_rq->millicpu;
 				if (cfs_b->cumulative_millicpu)
 					cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
