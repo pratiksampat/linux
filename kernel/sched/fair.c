@@ -3300,7 +3300,6 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	raw_spin_lock(&cfs_b->lock);
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
-			cfs_b->num_cfs_rq--;
 			if (cfs_rq->reco_applied) {
 				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime) > 5000000)
 					cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime;
@@ -3333,6 +3332,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 
 			list_del(&entry->list_node);
 			kfree(entry);
+			cfs_b->num_cfs_rq--;
 			break;
 		}
 	}
