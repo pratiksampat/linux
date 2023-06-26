@@ -3269,8 +3269,8 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 				(u64) cfs_rq,
 				cfs_rq->P95_runtime,
 				cfs_rq->P95_yield_time,
-				cfs_b->pa_recommender_quota,
-				cfs_b->pa_recommender_period);
+				cfs_b->quota,
+				cfs_b->period);
 	}
 
 	raw_spin_unlock(&cfs_b->lock);
@@ -3324,8 +3324,8 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 					(u64) cfs_rq,
 					cfs_rq->P95_runtime,
 					cfs_rq->P95_yield_time,
-					cfs_b->pa_recommender_quota,
-					cfs_b->pa_recommender_period,
+					cfs_b->quota,
+					cfs_b->period,
 					cfs_rq->reco_applied);
 			}
 
@@ -5491,7 +5491,7 @@ reset_runtime:
 	cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
 
 	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
-		     num_rqs, cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period);
+		     num_rqs, cfs_b->quota, cfs_b->period);
 
 assign_out:
 
