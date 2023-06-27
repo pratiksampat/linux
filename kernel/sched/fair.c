@@ -3241,10 +3241,11 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	if (cfs_b == NULL || cfs_b->recommender_status == 0)
 		return;
 
-	raw_spin_lock(&cfs_b->lock);
 	entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
 	entry->cfs_rq_p = (u64) cfs_rq;
 	INIT_LIST_HEAD(&entry->list_node);
+
+	raw_spin_lock(&cfs_b->lock);
 	list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
 	cfs_b->num_cfs_rq++;
 	if (cfs_rq->P95_runtime && cfs_rq->P95_yield_time) {
@@ -3264,6 +3265,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			cfs_b->quota = cfs_b->recommender_quota;
 		}
 
+#if 0
 		trace_printk("[ENQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu cum_cpu:%lld\n",
 				cfs_b->num_cfs_rq,
 				(u64) cfs_rq,
@@ -3272,6 +3274,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 				cfs_b->quota,
 				cfs_b->period,
 				cfs_b->cumulative_millicpu);
+#endif
 	}
 
 	raw_spin_unlock(&cfs_b->lock);
@@ -3319,6 +3322,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 					cfs_b->quota = cfs_b->recommender_quota;
 				}
 
+#if 0
 				trace_printk("[DEQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d cum_cpu:%lld\n",
 					cfs_b->num_cfs_rq,
 					(u64) cfs_rq,
@@ -3328,6 +3332,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 					cfs_b->period,
 					cfs_rq->reco_applied,
 					cfs_b->cumulative_millicpu);
+#endif
 			}
 
 			cfs_rq->reco_applied = false;
@@ -5391,8 +5396,10 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 		cfs_rq->pa_runtime_hist[cfs_rq->pa_hist_idx] = corr_runtime;
 		cfs_rq->pa_hist_idx++;
 
+#if 0
 		trace_printk("[ASSIGN] cfs_rq: 0x%llx yeild_time:%llu runtime:%llu\n",
 			     (u64) cfs_rq, corr_yeild_time, corr_runtime);
+#endif
 		/* Wrap around array index */
 		cfs_rq->pa_hist_idx %= ((cfs_b->pa_recommender_history) + 1);
 reset_runtime:
@@ -5449,11 +5456,13 @@ reset_runtime:
 		if (min_runtime > temp_cfs_rq->P95_runtime)
 			min_runtime = temp_cfs_rq->P95_runtime;
 
+#if 0
 		trace_printk("[P95] cfs_rq: 0x%llx runtime: %llu yield: %llu min_runtime: %llu min_yield: %llu vcpu:%llu\n",
 			     (u64) temp_cfs_rq,
 			     temp_cfs_rq->P95_runtime,
 			     temp_cfs_rq->P95_yield_time,
 			     min_runtime, min_yeild, temp_cfs_rq->millicpu);
+#endif
 		num_rqs++;
 		cfs_rq->reco_applied = true;
 	}
@@ -5493,8 +5502,10 @@ reset_runtime:
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
 
+#if 0
 	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
 		     num_rqs, cfs_b->quota, cfs_b->period);
+#endif
 
 assign_out:
 
@@ -5718,8 +5729,10 @@ void unthrottle_cfs_rq(struct cfs_rq *cfs_rq)
 			cfs_rq->yield_time_start += curr_throttle_time;
 		if (cfs_rq->runtime_start)
 			cfs_rq->runtime_start += curr_throttle_time;
+#if 0
 		trace_printk("[UNTHROTTLE] cfs_rq: 0x%llx throttle_time:%llu\n",
 			     (u64) cfs_rq, curr_throttle_time);
+#endif
 	}
 
 	/* update hierarchical throttle state */
@@ -5947,6 +5960,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
 
+#if 0
 	rcu_read_lock();
 	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
 		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
@@ -5954,6 +5968,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			entry->cfs_rq_p, temp_cfs_rq->throttled);
 	}
 	rcu_read_unlock();
+#endif
 
 	/*
 	 * idle depends on !throttled (for the case of a large deficit), and if
