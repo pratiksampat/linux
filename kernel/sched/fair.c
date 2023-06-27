@@ -3253,6 +3253,9 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		if (cfs_b->cumulative_millicpu)
 			cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
 
+		trace_printk("[ENQUEUE] old quota: %llu\n", cfs_b->pa_recommender_quota);
+		cfs_b->pa_recommender_quota += 10000000;
+
 		cfs_rq->reco_applied = true;
 
 		cfs_b->recommender_period = cfs_b->pa_recommender_period;
@@ -3308,6 +3311,11 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 					cfs_b->cumulative_millicpu -= cfs_rq->millicpu;
 				if (cfs_b->cumulative_millicpu)
 					cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
+
+				if ((s64) (cfs_b->pa_recommender_quota - 10000000) > 10000000) {
+					trace_printk("[DEQUEUE] old quota: %llu\n", cfs_b->pa_recommender_quota);
+					cfs_b->pa_recommender_quota -= 10000000;
+				}
 			}
 
 			if (cfs_b->pa_recommender_quota && cfs_b->pa_recommender_period) {
