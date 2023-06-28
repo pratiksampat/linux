@@ -3247,7 +3247,6 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 
 	raw_spin_lock(&cfs_b->lock);
 	list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
-	raw_spin_unlock(&cfs_b->lock);
 	cfs_b->num_cfs_rq++;
 	if (cfs_rq->P95_runtime && cfs_rq->P95_yield_time) {
 		cfs_b->pa_recommender_quota += cfs_rq->P95_runtime;
@@ -3278,7 +3277,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 #endif
 	}
 
-	// raw_spin_unlock(&cfs_b->lock);
+	raw_spin_unlock(&cfs_b->lock);
 }
 
 static void
