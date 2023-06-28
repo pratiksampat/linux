@@ -3241,6 +3241,22 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	if (cfs_b == NULL || cfs_b->recommender_status == 0)
 		return;
 
+
+	raw_spin_lock(&cfs_b->lock);
+	cfs_b->num_cfs_rq++;
+
+	if (cfs_b->num_cfs_rq == 1) {
+		cfs_b->quota = 50000000;
+	} else {
+		cfs_b->quota += 50000000;
+	}
+	cfs_b->period = 180000000;
+	raw_spin_unlock(&cfs_b->lock);
+	trace_printk("[ENQUEUE] cfs_rq: %llx rqs: %d quota: %llu period: %llu\n",
+		    (u64) cfs_rq, cfs_b->num_cfs_rq, cfs_b->quota, cfs_b->period);
+
+
+#if 0
 	entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
 	entry->cfs_rq_p = (u64) cfs_rq;
 	INIT_LIST_HEAD(&entry->list_node);
@@ -3277,6 +3293,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 				cfs_b->cumulative_millicpu);
 #endif
 	}
+#endif
 
 	// raw_spin_unlock(&cfs_b->lock);
 }
@@ -3302,6 +3319,17 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	if (cfs_b == NULL || cfs_b->recommender_status == 0)
 		return;
 
+	raw_spin_lock(&cfs_b->lock);
+	if (cfs_b->quota > 50000000) {
+		cfs_b->quota -= 50000000;
+	}
+	cfs_b->period = 180000000;
+	cfs_b->num_cfs_rq--;
+	raw_spin_unlock(&cfs_b->lock);
+	trace_printk("[DEQUEUE] cfs_rq: %llx rqs: %d quota: %llu period: %llu\n",
+		    (u64) cfs_rq, cfs_b->num_cfs_rq, cfs_b->quota, cfs_b->period);
+
+#if 0
 	raw_spin_lock(&cfs_b->lock);
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
@@ -3345,6 +3373,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		}
 	}
 	raw_spin_unlock(&cfs_b->lock);
+#endif
 }
 
 /*
@@ -5420,6 +5449,7 @@ reset_runtime:
 
 	cfs_rq->prev_runtime_amount = amount;
 
+#if 0
 	/* Recommendation */
 	if (cfs_rq->pa_hist_idx < cfs_b->pa_recommender_history || !legitimate_yeild)
 		goto assign_out;
@@ -5502,6 +5532,7 @@ reset_runtime:
 		cfs_b->period = cfs_b->recommender_period;
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
+#endif
 
 #if 0
 	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
