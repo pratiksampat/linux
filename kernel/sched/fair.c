@@ -3265,7 +3265,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			cfs_b->quota = cfs_b->recommender_quota;
 		}
 
-#if 0
+#if 1
 		trace_printk("[ENQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu cum_cpu:%lld\n",
 				cfs_b->num_cfs_rq,
 				(u64) cfs_rq,
@@ -3322,7 +3322,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 					cfs_b->quota = cfs_b->recommender_quota;
 				}
 
-#if 0
+#if 1
 				trace_printk("[DEQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d cum_cpu:%lld\n",
 					cfs_b->num_cfs_rq,
 					(u64) cfs_rq,
@@ -5502,7 +5502,7 @@ reset_runtime:
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
 
-#if 0
+#if 1
 	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
 		     num_rqs, cfs_b->quota, cfs_b->period);
 #endif
