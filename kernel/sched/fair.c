@@ -3259,12 +3259,10 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		cfs_b->recommender_period = cfs_b->pa_recommender_period;
 		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
 
-		if (cfs_b->recommender_period && cfs_b->recommender_quota) {
+		if (cfs_b->recommender_period && cfs_b->recommender_quota &&
+			cfs_b->num_cfs_rq > 1) {
 			cfs_b->period = cfs_b->recommender_period;
-			if (cfs_b->num_cfs_rq == 1)
-				cfs_b->quota = cfs_rq->P95_runtime + 5000000;
-			else
-				cfs_b->quota = cfs_b->recommender_quota + 5000000;
+			cfs_b->quota = cfs_b->recommender_quota + 5000000;
 		}
 
 #if 1
