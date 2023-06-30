@@ -3249,7 +3249,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
 	cfs_b->num_cfs_rq++;
 	if (cfs_rq->P95_runtime && cfs_rq->P95_yield_time) {
-		cfs_b->pa_recommender_quota += cfs_rq->P95_runtime;
+		cfs_b->pa_recommender_quota += cfs_rq->P95_runtime + 10000000;
 		cfs_b->cumulative_millicpu += cfs_rq->millicpu;
 		if (cfs_b->cumulative_millicpu)
 			cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
@@ -3305,8 +3305,8 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
 			if (cfs_rq->reco_applied) {
-				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime) > 5000000)
-					cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime;
+				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - 10000000) > 5000000)
+					cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime - 10000000;
 				if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 5000)
 					cfs_b->cumulative_millicpu -= cfs_rq->millicpu;
 				if (cfs_b->cumulative_millicpu)
@@ -5443,14 +5443,14 @@ reset_runtime:
 		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
 		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
 
-		temp_cfs_rq->millicpu = DIV_ROUND_UP_ULL(temp_cfs_rq->P95_runtime * 100000, temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time);
+		temp_cfs_rq->millicpu = DIV_ROUND_UP_ULL((temp_cfs_rq->P95_runtime + 10000000)* 100000, temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time);
 		cfs_b->cumulative_millicpu += temp_cfs_rq->millicpu;
 
 		// min_yeild = temp_cfs_rq->P95_yield_time;
 		// min_runtime = temp_cfs_rq->P95_runtime;
 
 		/* Add up all the runtimes */
-		cfs_b->pa_recommender_quota += temp_cfs_rq->P95_runtime;
+		cfs_b->pa_recommender_quota += temp_cfs_rq->P95_runtime + 10000000;
 		if (min_yeild > temp_cfs_rq->P95_yield_time)
 			min_yeild = temp_cfs_rq->P95_yield_time;
 		if (min_runtime > temp_cfs_rq->P95_runtime)
