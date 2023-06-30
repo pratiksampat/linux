@@ -3249,8 +3249,15 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
 	cfs_b->num_cfs_rq++;
 	if (cfs_rq->P95_runtime && cfs_rq->P95_yield_time) {
-		cfs_b->pa_recommender_quota += cfs_rq->P95_runtime + 10000000;
-		cfs_b->cumulative_millicpu += cfs_rq->millicpu;
+
+		if (cfs_b->num_cfs_rq == 1) {
+			cfs_b->pa_recommender_quota = cfs_rq->P95_runtime + 10000000;
+			cfs_b->cumulative_millicpu = cfs_rq->millicpu;
+		} else {
+			cfs_b->pa_recommender_quota += cfs_rq->P95_runtime + 10000000;
+			cfs_b->cumulative_millicpu += cfs_rq->millicpu;
+		}
+
 		if (cfs_b->cumulative_millicpu)
 			cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
 
@@ -3259,8 +3266,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		cfs_b->recommender_period = cfs_b->pa_recommender_period;
 		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
 
-		if (cfs_b->recommender_period && cfs_b->recommender_quota &&
-			cfs_b->num_cfs_rq > 1) {
+		if (cfs_b->recommender_period && cfs_b->recommender_quota) {
 			cfs_b->period = cfs_b->recommender_period;
 			cfs_b->quota = cfs_b->recommender_quota;
 		}
