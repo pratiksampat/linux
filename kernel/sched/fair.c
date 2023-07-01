@@ -3312,7 +3312,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
 			if (cfs_rq->reco_applied) {
 				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - 10000000) > 5000000)
-					cfs_b->pa_recommender_quota -= cfs_rq->P95_runtime - 10000000;
+					cfs_b->pa_recommender_quota = cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - 10000000;
 				if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 5000)
 					cfs_b->cumulative_millicpu -= cfs_rq->millicpu;
 				if (cfs_b->cumulative_millicpu)
