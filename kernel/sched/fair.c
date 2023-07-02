@@ -58,7 +58,7 @@
 #include "stats.h"
 #include "autogroup.h"
 
-#define QUOTA_LEEWAY 20000000
+#define QUOTA_LEEWAY 50000000
 
 /*
  * Targeted preemption latency for CPU-bound tasks:
