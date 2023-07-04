@@ -58,8 +58,10 @@
 #include "stats.h"
 #include "autogroup.h"
 
-#define QUOTA_LEEWAY 10000000
-#define PERIOD_LEEWAY 50000000
+#define QUOTA_LEEWAY 0
+#define PERIOD_LEEWAY 0
+
+#define RETENTION_THRESHOLD	5
 
 /*
  * Targeted preemption latency for CPU-bound tasks:
@@ -3225,7 +3227,8 @@ static void
 account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
 	struct cfs_bandwidth *cfs_b = tg_cfs_bandwidth(cfs_rq->tg);
-	struct rq_entry *entry;
+	struct rq_entry *entry, *temp_entry;
+	int found = false;
 
 	update_load_add(&cfs_rq->load, se->load.weight);
 #ifdef CONFIG_SMP
@@ -3244,6 +3247,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	if (cfs_b == NULL || cfs_b->recommender_status == 0)
 		return;
 
+#if 0
 	entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
 	entry->cfs_rq_p = (u64) cfs_rq;
 	INIT_LIST_HEAD(&entry->list_node);
@@ -3290,6 +3294,32 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	}
 
 	raw_spin_unlock(&cfs_b->lock);
+#endif
+
+	raw_spin_lock(&cfs_b->lock);
+	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+		if (entry->cfs_rq_p == (u64) cfs_rq) {
+			entry->age--;
+			entry->age = max(0, entry->age);
+			found = true;
+		}
+	}
+
+	/* Only add to the enqueue list if not already there */
+	if (!found) {
+		cfs_b->num_cfs_rq++;
+
+		entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
+		entry->cfs_rq_p = (u64) cfs_rq;
+		entry->age = 0;
+		INIT_LIST_HEAD(&entry->list_node);
+		list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
+	}
+
+	trace_printk("[ENQUEUE] FOUND:%d cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+				 found, (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+
+	raw_spin_unlock(&cfs_b->lock);
 }
 
 static void
@@ -3313,6 +3343,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	if (cfs_b == NULL || cfs_b->recommender_status == 0)
 		return;
 
+#if 0
 	raw_spin_lock(&cfs_b->lock);
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
@@ -3359,6 +3390,27 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		}
 	}
 	raw_spin_unlock(&cfs_b->lock);
+#endif
+
+	raw_spin_lock(&cfs_b->lock);
+	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+		if (entry->cfs_rq_p != (u64) cfs_rq)
+			continue;
+		/* Age the entry if found - If it is too old, then remove it */
+		entry->age++;
+		trace_printk("[DEQUEUE] AGE cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+					 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+		if (entry->age >= RETENTION_THRESHOLD) {
+			trace_printk("[DEQUEUE] DEL cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+					 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+			list_del(&entry->list_node);
+			kfree(entry);
+			cfs_b->num_cfs_rq--;
+			break;
+		}
+	}
+	raw_spin_unlock(&cfs_b->lock);
+
 }
 
 /*
@@ -5339,7 +5391,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	struct rq *rq = rq_of(cfs_rq);
 	u64 min_amount, amount = 0, curr_yeild_time;
 	bool legitimate_yeild = false;
-	struct rq_entry *entry;
+	struct rq_entry *entry, *temp_entry;
 	int percentile_idx, num_rqs = 0;
 	u64 min_yeild, min_runtime;
 
@@ -5434,6 +5486,28 @@ reset_runtime:
 
 	cfs_rq->prev_runtime_amount = amount;
 
+	/* De-age the current cfs_rq and age the other RQs */
+	/* Note using safe here instead of RCU because we perform deletions */
+	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+		if (entry->cfs_rq_p == (u64) cfs_rq) {
+			entry->age--;
+			entry->age = max(0, entry->age);
+			trace_printk("[ASSIGN] YOUNG cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+				 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+			continue;
+		}
+		entry->age++;
+		trace_printk("[ASSIGN] AGE cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+				 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+		if (entry->age >= RETENTION_THRESHOLD) {
+			trace_printk("[ASSIGN] OLD REMOVE cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+				 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+			list_del(&entry->list_node);
+			kfree(entry);
+			cfs_b->num_cfs_rq--;
+		}
+	}
+
 	/* Recommendation */
 	if (cfs_rq->pa_hist_idx < cfs_b->pa_recommender_history || !legitimate_yeild)
 		goto assign_out;
@@ -5516,7 +5590,7 @@ reset_runtime:
 		// if ((s64) (cfs_b->recommender_period - PERIOD_LEEWAY) > 0)
 		// 	cfs_b->period = cfs_b->recommender_period - PERIOD_LEEWAY;
 		// else
-		cfs_b->period = 100000000;
+		cfs_b->period = cfs_b->recommender_period;
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
 
@@ -5965,8 +6039,8 @@ next:
 static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, unsigned long flags)
 {
 	int throttled;
-	int i = 0;
-	struct rq_entry *entry;
+	// int i = 0;
+	// struct rq_entry *entry;
 
 	/* no need to continue the timer with no bandwidth constraint */
 	if (cfs_b->quota == RUNTIME_INF)
