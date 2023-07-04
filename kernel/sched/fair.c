@@ -58,7 +58,7 @@
 #include "stats.h"
 #include "autogroup.h"
 
-#define QUOTA_LEEWAY 5000000
+#define QUOTA_LEEWAY 10000000
 #define PERIOD_LEEWAY 50000000
 
 /*
