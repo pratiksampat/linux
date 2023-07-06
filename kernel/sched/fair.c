@@ -61,7 +61,7 @@
 #define QUOTA_LEEWAY 0
 #define PERIOD_LEEWAY 0
 
-#define RETENTION_THRESHOLD	2
+#define RETENTION_THRESHOLD	3
 
 /*
  * Targeted preemption latency for CPU-bound tasks:
