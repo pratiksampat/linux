@@ -5590,7 +5590,8 @@ reset_runtime:
 		// if ((s64) (cfs_b->recommender_period - PERIOD_LEEWAY) > 0)
 		// 	cfs_b->period = cfs_b->recommender_period - PERIOD_LEEWAY;
 		// else
-		cfs_b->period = cfs_b->recommender_period;
+		// cfs_b->period = cfs_b->recommender_period;
+		cfs_b->period = 100000000;
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
 
