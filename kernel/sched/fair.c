@@ -61,7 +61,7 @@
 #define QUOTA_LEEWAY 0
 #define PERIOD_LEEWAY 0
 
-#define RETENTION_THRESHOLD	5
+#define RETENTION_THRESHOLD	2
 
 /*
  * Targeted preemption latency for CPU-bound tasks:
@@ -3300,7 +3300,8 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
 			entry->age--;
-			entry->age = max(0, entry->age);
+			if (entry->age < 0)
+				entry->age = 0;
 			found = true;
 		}
 	}
@@ -5491,7 +5492,8 @@ reset_runtime:
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
 			entry->age--;
-			entry->age = max(0, entry->age);
+			if (entry->age < 0)
+				entry->age = 0;
 			trace_printk("[ASSIGN] YOUNG cfs_rq: 0x%llx num_rqs: %d age: %d\n",
 				 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
 			continue;
