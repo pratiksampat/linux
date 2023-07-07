@@ -6062,7 +6062,9 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
 
-#if 0
+	if (!cfs_b->recommender_active)
+		goto reco_out;
+#if 1
 	/* Age the entries */
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		trace_printk("[PERIOD] AGE cfs_rq: 0x%llx num_rqs: %d age: %d\n",
@@ -6143,6 +6145,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	rcu_read_unlock();
 #endif
 
+reco_out:
 	/*
 	 * idle depends on !throttled (for the case of a large deficit), and if
 	 * we're going inactive then everything else can be deferred
