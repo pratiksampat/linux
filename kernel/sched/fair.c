@@ -6097,7 +6097,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
 
 		temp_cfs_rq->millicpu = DIV_ROUND_UP_ULL((temp_cfs_rq->P95_runtime + QUOTA_LEEWAY)* 100000, temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time);
-		// cfs_b->cumulative_millicpu += temp_cfs_rq->millicpu;
+		cfs_b->cumulative_millicpu += temp_cfs_rq->millicpu;
 
 		/* Add up all the runtimes */
 		cfs_b->pa_recommender_quota += temp_cfs_rq->P95_runtime + QUOTA_LEEWAY;
