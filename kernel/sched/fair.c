@@ -5490,6 +5490,8 @@ reset_runtime:
 	/* De-age the current cfs_rq and age the other RQs */
 	/* Note using safe here instead of RCU because we perform deletions */
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
+		trace_printk("[ASSIGN] SIZE cfs_rq: 0x%llx history_size:%d\n", (u64) entry->cfs_rq_p, temp_cfs_rq->pa_hist_idx);
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
 			entry->age--;
 			if (entry->age < 0)
