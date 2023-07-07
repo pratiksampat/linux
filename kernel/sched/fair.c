@@ -6087,7 +6087,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
 		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
 
-		trace_printk("LOOP ENTRY cfs_rq: 0x%llx\n", (u64) entry->cfs_rq_p);
+		trace_printk("LOOP ENTRY cfs_rq: 0x%llx history_size:%d\n", (u64) entry->cfs_rq_p, temp_cfs_rq->pa_hist_idx);
 		if (temp_cfs_rq->pa_hist_idx - 1 <= 0)
 			continue;
 		sort(temp_cfs_rq->pa_yield_time_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
