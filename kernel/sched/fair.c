@@ -6074,7 +6074,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 				 (u64) entry->cfs_rq_p, cfs_b->num_cfs_rq, entry->age);
 		}
 	}
-#endif
+
 	/* Recommendation */
 	cfs_b->pa_recommender_quota = 0;
 	cfs_b->pa_recommender_period = 0;
@@ -6123,7 +6123,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	raw_spin_lock_irqsave(&cfs_b->lock, flags);
 	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
 		     num_rqs, cfs_b->quota, cfs_b->period);
-
+#endif
 #if 0
 	rcu_read_lock();
 	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
