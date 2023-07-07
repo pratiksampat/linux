@@ -59,7 +59,7 @@
 #include "autogroup.h"
 
 #define QUOTA_LEEWAY 0
-#define PERIOD_LEEWAY 80000000
+#define PERIOD_LEEWAY 0
 
 #define RETENTION_THRESHOLD	3
 
@@ -5393,8 +5393,8 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	u64 min_amount, amount = 0, curr_yeild_time;
 	bool legitimate_yeild = false;
 	struct rq_entry *entry, *temp_entry;
-	int percentile_idx, num_rqs = 0;
-	u64 min_yeild, min_runtime;
+	// int percentile_idx, num_rqs = 0;
+	// u64 min_yeild, min_runtime;
 
 	lockdep_assert_held(&cfs_b->lock);
 
@@ -5496,8 +5496,9 @@ reset_runtime:
 				entry->age = 0;
 			trace_printk("[ASSIGN] YOUNG cfs_rq: 0x%llx num_rqs: %d age: %d\n",
 				 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
-			continue;
+			break;
 		}
+#if 0
 		entry->age++;
 		trace_printk("[ASSIGN] AGE cfs_rq: 0x%llx num_rqs: %d age: %d\n",
 				 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
@@ -5508,12 +5509,14 @@ reset_runtime:
 			kfree(entry);
 			cfs_b->num_cfs_rq--;
 		}
+#endif
 	}
 
 	/* Recommendation */
 	if (cfs_rq->pa_hist_idx < cfs_b->pa_recommender_history || !legitimate_yeild)
 		goto assign_out;
 
+#if 0
 	cfs_b->pa_recommender_quota = 0;
 	cfs_b->pa_recommender_period = 0;
 	min_yeild = INT_MAX;
@@ -5600,6 +5603,7 @@ reset_runtime:
 #if 1
 	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
 		     num_rqs, cfs_b->quota, cfs_b->period);
+#endif
 #endif
 
 assign_out:
@@ -6042,8 +6046,9 @@ next:
 static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, unsigned long flags)
 {
 	int throttled;
-	// int i = 0;
-	// struct rq_entry *entry;
+	struct rq_entry *entry, *temp_entry;
+	int percentile_idx, num_rqs = 0;
+	u64 min_yeild, min_runtime;
 
 	/* no need to continue the timer with no bandwidth constraint */
 	if (cfs_b->quota == RUNTIME_INF)
@@ -6054,6 +6059,68 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
+
+	/* Age the entries */
+	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+		trace_printk("[PERIOD] AGE cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+				 (u64) entry->cfs_rq_p, cfs_b->num_cfs_rq, entry->age);
+		entry->age++;
+		if (entry->age >= RETENTION_THRESHOLD) {
+			list_del(&entry->list_node);
+			kfree(entry);
+			cfs_b->num_cfs_rq--;
+			trace_printk("[PERIOD] DEL cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+				 (u64) entry->cfs_rq_p, cfs_b->num_cfs_rq, entry->age);
+		}
+	}
+	/* Recommendation */
+	cfs_b->pa_recommender_quota = 0;
+	cfs_b->pa_recommender_period = 0;
+	min_yeild = INT_MAX;
+	min_runtime = INT_MAX;
+	cfs_b->cumulative_millicpu = 0;
+
+	raw_spin_unlock_irqrestore(&cfs_b->lock, flags);
+	rcu_read_lock();
+	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
+		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
+
+		if (temp_cfs_rq->pa_hist_idx - 1 <= 0)
+			continue;
+		sort(temp_cfs_rq->pa_yield_time_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+		sort(temp_cfs_rq->pa_runtime_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+
+		percentile_idx = DIV_ROUND_UP(99 * (temp_cfs_rq->pa_hist_idx - 2), 100);
+		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
+		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
+
+		temp_cfs_rq->millicpu = DIV_ROUND_UP_ULL((temp_cfs_rq->P95_runtime + QUOTA_LEEWAY)* 100000, temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time);
+		cfs_b->cumulative_millicpu += temp_cfs_rq->millicpu;
+
+		/* Add up all the runtimes */
+		cfs_b->pa_recommender_quota += temp_cfs_rq->P95_runtime + QUOTA_LEEWAY;
+		if (min_yeild > temp_cfs_rq->P95_yield_time)
+			min_yeild = temp_cfs_rq->P95_yield_time;
+		if (min_runtime > temp_cfs_rq->P95_runtime)
+			min_runtime = temp_cfs_rq->P95_runtime;
+		num_rqs++;
+	}
+	rcu_read_unlock();
+
+	cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
+	cfs_b->recommender_period = cfs_b->pa_recommender_period;
+	cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+
+	if (cfs_b->recommender_period && cfs_b->recommender_quota) {
+		if ((s64) (cfs_b->recommender_period - PERIOD_LEEWAY) > 0)
+			cfs_b->period = cfs_b->recommender_period - PERIOD_LEEWAY;
+		else
+			cfs_b->period = cfs_b->recommender_period;
+		cfs_b->quota = cfs_b->recommender_quota;
+	}
+	raw_spin_lock_irqsave(&cfs_b->lock, flags);
+	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
+		     num_rqs, cfs_b->quota, cfs_b->period);
 
 #if 0
 	rcu_read_lock();
