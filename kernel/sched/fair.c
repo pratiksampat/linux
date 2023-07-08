@@ -6129,10 +6129,11 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	trace_printk("RECO quota:%llu RECO period:%llu\n",
 		      cfs_b->recommender_quota, cfs_b->recommender_period);
 	if (cfs_b->recommender_period && cfs_b->recommender_quota) {
-		if ((s64) (cfs_b->recommender_period - PERIOD_LEEWAY) > 0)
-			cfs_b->period = cfs_b->recommender_period - PERIOD_LEEWAY;
-		else
-			cfs_b->period = cfs_b->recommender_period;
+		// if ((s64) (cfs_b->recommender_period - PERIOD_LEEWAY) > 0)
+		// 	cfs_b->period = cfs_b->recommender_period - PERIOD_LEEWAY;
+		// else
+		// 	cfs_b->period = cfs_b->recommender_period;
+		cfs_b->period = 100000000;
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
 	// raw_spin_lock_irqsave(&cfs_b->lock, flags);
