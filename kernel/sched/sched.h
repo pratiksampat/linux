@@ -391,6 +391,7 @@ struct cfs_bandwidth {
 	bool			trace_ulim;
 	int			trace_multiplier;
 	u64			cumulative_millicpu;
+	u64			pb_millicpu;
 	int			num_cfs_rq;
 
 	/* Statistics: */

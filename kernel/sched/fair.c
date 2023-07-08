@@ -6059,11 +6059,19 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	throttled = !list_empty(&cfs_b->throttled_cfs_rq);
 	cfs_b->nr_periods += overrun;
 
-	/* Refill extra burst quota even if cfs_b->idle */
-	__refill_cfs_bandwidth_runtime(cfs_b);
-
 	if (!cfs_b->recommender_active)
 		goto reco_out;
+
+	/* Period bound tracing */
+	if (!cfs_b->idle) {
+		cfs_b->pb_runtime_hist[cfs_b->pb_hist_idx] = cfs_b->quota - cfs_b->runtime;
+		cfs_b->pb_period_hist[cfs_b->pb_hist_idx] = cfs_b->period;
+		cfs_b->pb_hist_idx++;
+
+		trace_printk("[PERIOD BOUND] runtime: %llu period: %llu\n",
+					 cfs_b->quota - cfs_b->runtime, cfs_b->period);
+	}
+
 #if 1
 	/* Age the entries */
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
@@ -6079,7 +6087,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		}
 	}
 #endif
-	/* Recommendation */
+	/* Period Agnostic Recommendation */
 	cfs_b->pa_recommender_quota = 0;
 	cfs_b->pa_recommender_period = 0;
 	cfs_b->recommender_quota = 0;
@@ -6093,18 +6101,15 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
 		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
 
-		trace_printk("LOOP ENTRY cfs_rq: 0x%llx history_size:%d\n", (u64) entry->cfs_rq_p, temp_cfs_rq->pa_hist_idx);
 		if (temp_cfs_rq->pa_hist_idx - 1 <= 0)
 			continue;
 		sort(temp_cfs_rq->pa_yield_time_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
 		sort(temp_cfs_rq->pa_runtime_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
 
 		percentile_idx = DIV_ROUND_UP(99 * (temp_cfs_rq->pa_hist_idx - 2), 100);
-		trace_printk("PERCENTILE IDX: %d\n", percentile_idx);
 		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
 		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
 
-		trace_printk("DIV BY ZERO 1: %llu\n", temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time);
 		temp_cfs_rq->millicpu = DIV_ROUND_UP_ULL((temp_cfs_rq->P95_runtime + QUOTA_LEEWAY)* 100000, temp_cfs_rq->P95_runtime + temp_cfs_rq->P95_yield_time);
 		cfs_b->cumulative_millicpu += temp_cfs_rq->millicpu;
 
@@ -6115,17 +6120,56 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		if (min_runtime > temp_cfs_rq->P95_runtime)
 			min_runtime = temp_cfs_rq->P95_runtime;
 		num_rqs++;
-		trace_printk("LOOP EXIT cfs_rq: 0x%llx\n", (u64) entry->cfs_rq_p);
 	}
 	rcu_read_unlock();
 
-	trace_printk("DIV BY ZERO 2: %llu\n", cfs_b->cumulative_millicpu);
 	if (cfs_b->cumulative_millicpu) {
 		cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
-		cfs_b->recommender_period = cfs_b->pa_recommender_period;
-		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+
+		trace_printk("[RECOMMEND AGNOS] quota: %llu period: %llu millicpu: %llu\n",
+					cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period, cfs_b->cumulative_millicpu);
 	}
 
+	/* Period bound recommendation */
+	if (cfs_b->pb_hist_idx >= cfs_b->pb_recommender_history) {
+		int percentile_idx;
+
+		sort(cfs_b->pb_period_hist, cfs_b->pb_recommender_history, sizeof(u64), cmp_u64, NULL);
+		sort(cfs_b->pb_runtime_hist, cfs_b->pb_recommender_history, sizeof(u64), cmp_u64, NULL);
+
+		percentile_idx = DIV_ROUND_UP(99 * (cfs_b->pb_recommender_history - 1), 100);
+		cfs_b->pb_recommender_period = cfs_b->pb_period_hist[percentile_idx];
+		cfs_b->pb_recommender_quota = cfs_b->pb_runtime_hist[percentile_idx];
+
+		cfs_b->pb_millicpu = DIV_ROUND_UP_ULL(cfs_b->pb_recommender_quota * 100000, cfs_b->pb_recommender_period + cfs_b->pb_recommender_quota);
+
+		trace_printk("[RECOMMEND BOUND] quota: %llu period: %llu millicpu: %llu\n",
+					cfs_b->pb_recommender_quota, cfs_b->pb_recommender_period, cfs_b->pb_millicpu);
+
+		cfs_b->pb_hist_idx = 0;
+		memset(cfs_b->pb_period_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_period_hist));
+		memset(cfs_b->pb_runtime_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_runtime_hist));
+	}
+
+	if (!cfs_b->pb_millicpu && cfs_b->cumulative_millicpu) {
+		cfs_b->recommender_period = cfs_b->pa_recommender_period;
+		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+	} else if(cfs_b->pb_millicpu && !cfs_b->cumulative_millicpu) {
+		cfs_b->recommender_period = cfs_b->pb_recommender_period;
+		cfs_b->recommender_quota = cfs_b->pb_recommender_quota;
+	} else if(cfs_b->pb_millicpu && cfs_b->cumulative_millicpu){
+		if (cfs_b->pb_millicpu <=  cfs_b->cumulative_millicpu) {
+		cfs_b->recommender_period = cfs_b->pb_recommender_period;
+		cfs_b->recommender_quota = cfs_b->pb_recommender_quota;
+		} else {
+			cfs_b->recommender_period = cfs_b->pa_recommender_period;
+			cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+		}
+	}
+
+	trace_printk("[RECOMMEND FINAL] quota: %llu period: %llu\n",
+				cfs_b->recommender_quota, cfs_b->recommender_period);
+#if 0
 	trace_printk("RECO quota:%llu RECO period:%llu\n",
 		      cfs_b->recommender_quota, cfs_b->recommender_period);
 	if (cfs_b->recommender_period && cfs_b->recommender_quota) {
@@ -6139,6 +6183,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	// raw_spin_lock_irqsave(&cfs_b->lock, flags);
 	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
 		     num_rqs, cfs_b->quota, cfs_b->period);
+#endif
 
 #if 0
 	rcu_read_lock();
@@ -6151,6 +6196,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 #endif
 
 reco_out:
+
+	/* Refill extra burst quota even if cfs_b->idle */
+	__refill_cfs_bandwidth_runtime(cfs_b);
+
 	/*
 	 * idle depends on !throttled (for the case of a large deficit), and if
 	 * we're going inactive then everything else can be deferred
