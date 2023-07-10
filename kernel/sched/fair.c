@@ -6059,7 +6059,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	throttled = !list_empty(&cfs_b->throttled_cfs_rq);
 	cfs_b->nr_periods += overrun;
 
-	if (!cfs_b->recommender_active || cfs_b->pb_hist_idx < cfs_b->pb_recommender_history)
+	if (!cfs_b->recommender_active)
 		goto reco_out;
 
 	/* Period bound tracing */
@@ -6087,6 +6087,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		}
 	}
 #endif
+
+	if (cfs_b->pb_hist_idx < cfs_b->pb_recommender_history)
+		reco_out;
+
 	/* Period Agnostic Recommendation */
 	cfs_b->pa_recommender_quota = 0;
 	cfs_b->pa_recommender_period = 0;
