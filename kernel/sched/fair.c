@@ -58,8 +58,8 @@
 #include "stats.h"
 #include "autogroup.h"
 
-#define QUOTA_LEEWAY 10000000
-#define PERIOD_LEEWAY 50000000
+#define QUOTA_LEEWAY 0
+#define PERIOD_LEEWAY 0
 
 /*
  * Targeted preemption latency for CPU-bound tasks:
@@ -3270,10 +3270,10 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
 
 		if (cfs_b->recommender_period && cfs_b->recommender_quota) {
-			// if ((s64) (cfs_b->recommender_period - PERIOD_LEEWAY) > 0)
-			// 	cfs_b->period = cfs_b->recommender_period - PERIOD_LEEWAY;
-			// else
-			cfs_b->period = 100000000;
+			if ((s64) (cfs_b->recommender_period - PERIOD_LEEWAY) > 0)
+				cfs_b->period = cfs_b->recommender_period - PERIOD_LEEWAY;
+			else
+				cfs_b->period = cfs_b->recommender_period;
 			cfs_b->quota = cfs_b->recommender_quota;
 		}
 
