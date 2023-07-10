@@ -6089,7 +6089,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 #endif
 
 	if (cfs_b->pb_hist_idx < cfs_b->pb_recommender_history)
-		reco_out;
+		goto reco_out;
 
 	/* Period Agnostic Recommendation */
 	cfs_b->pa_recommender_quota = 0;
