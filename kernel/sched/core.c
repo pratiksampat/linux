@@ -11304,6 +11304,37 @@ static int cpu_cfs_recommend_sample_show(struct seq_file *sf, void *v)
 	return 0;
 }
 
+static ssize_t cpu_cfs_recommend_leeway_write(struct kernfs_open_file *of,
+			     char *buf, size_t nbytes, loff_t off)
+{
+	char tok[21];	/* U64_MAX */
+	u64 quota_leeway = 0, period_leeway = 0;
+	struct task_group *tg = css_tg(of_css(of));
+	struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+
+	if (sscanf(buf, "%20s %llu", tok, &period_leeway) < 1)
+		return -EINVAL;
+
+	if (sscanf(tok, "%llu", &quota_leeway) < 1)
+		return -EINVAL;
+
+	cfs_b->quota_leeway = quota_leeway;
+	cfs_b->period_leeway = period_leeway;
+
+	return nbytes;
+}
+
+static int cpu_cfs_recommend_leeway_show(struct seq_file *sf, void *v)
+{
+	struct task_group *tg = css_tg(seq_css(sf));
+
+	seq_printf(sf, "%llu %llu\n", tg->cfs_bandwidth.quota_leeway,
+		   tg->cfs_bandwidth.period_leeway);
+
+	return 0;
+}
+
+
 static s64 cpu_cfs_pb_recommend_history_read_s64(struct cgroup_subsys_state *css,
 				  struct cftype *cft)
 {
@@ -11440,6 +11471,13 @@ static struct cftype cpu_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cpu_cfs_recommend_sample_show,
 		.write = cpu_cfs_recommend_sample_write,
+	},
+	/* [DEBUGGING] Dynamically add period and quota leeways */
+	{
+		.name = "recommend.leeway",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpu_cfs_recommend_leeway_show,
+		.write = cpu_cfs_recommend_leeway_write,
 	},
 	/* Recommend history size for period bound tracing */
 	{

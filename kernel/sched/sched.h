@@ -369,6 +369,9 @@ struct cfs_bandwidth {
 	/* How large or small the history window must be */
 	int			pa_recommender_history;
 	int			pb_recommender_history;
+	/* Leeways */
+	u64			period_leeway;
+	u64			quota_leeway;
 	/* Recommendations from the algorithm */
 	u64			pa_recommender_period;
 	u64			pa_recommender_quota;
