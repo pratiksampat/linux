@@ -6179,8 +6179,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	// }
 
 	if(cfs_b->cumulative_millicpu) {
-		cfs_b->recommender_period = cfs_b->pa_recommender_period;
-		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+		cfs_b->recommender_period = 179661375;
+		cfs_b->recommender_quota = 59655284;
+		// cfs_b->recommender_period = cfs_b->pa_recommender_period;
+		// cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
 	}
 
 	trace_printk("[RECOMMEND FINAL] quota: %llu period: %llu\n",
