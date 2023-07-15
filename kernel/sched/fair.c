@@ -6130,8 +6130,8 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	if (cfs_b->cumulative_millicpu) {
 		cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
 
-		trace_printk("[RECOMMEND AGNOS] quota: %llu period: %llu millicpu: %llu\n",
-					cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period, cfs_b->cumulative_millicpu);
+		trace_printk("[RECOMMEND AGNOS] RQS: %d quota: %llu period: %llu millicpu: %llu\n",
+					num_rqs, cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period, cfs_b->cumulative_millicpu);
 	}
 
 	/* Period bound recommendation */
@@ -6173,9 +6173,14 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	}
 #endif
 
-	if(cfs_b->pb_millicpu) {
-		cfs_b->recommender_period = cfs_b->pb_recommender_period;
-		cfs_b->recommender_quota = cfs_b->pb_recommender_quota;
+	// if(cfs_b->pb_millicpu) {
+	// 	cfs_b->recommender_period = cfs_b->pb_recommender_period;
+	// 	cfs_b->recommender_quota = cfs_b->pb_recommender_quota;
+	// }
+
+	if(cfs_b->cumulative_millicpu) {
+		cfs_b->recommender_period = cfs_b->pa_recommender_period;
+		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
 	}
 
 	trace_printk("[RECOMMEND FINAL] quota: %llu period: %llu\n",
