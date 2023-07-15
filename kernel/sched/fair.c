@@ -3300,7 +3300,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
 			entry->age--;
-			if (entry->age < 0)
+			if ((s64) entry->age < 0)
 				entry->age = 0;
 			found = true;
 		}
@@ -3317,8 +3317,8 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
 	}
 
-	trace_printk("[ENQUEUE] FOUND:%d cfs_rq: 0x%llx num_rqs: %d age: %d\n",
-				 found, (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+	// trace_printk("[ENQUEUE] FOUND:%d cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+	// 			 found, (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
 
 	raw_spin_unlock(&cfs_b->lock);
 }
@@ -3399,11 +3399,11 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			continue;
 		/* Age the entry if found - If it is too old, then remove it */
 		entry->age++;
-		trace_printk("[DEQUEUE] AGE cfs_rq: 0x%llx num_rqs: %d age: %d\n",
-					 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+		// trace_printk("[DEQUEUE] AGE cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+		// 			 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
 		if (entry->age >= RETENTION_THRESHOLD) {
-			trace_printk("[DEQUEUE] DEL cfs_rq: 0x%llx num_rqs: %d age: %d\n",
-					 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+			// trace_printk("[DEQUEUE] DEL cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+			// 		 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
 			list_del(&entry->list_node);
 			kfree(entry);
 			cfs_b->num_cfs_rq--;
@@ -5491,13 +5491,13 @@ reset_runtime:
 	/* Note using safe here instead of RCU because we perform deletions */
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
-		trace_printk("[ASSIGN] SIZE cfs_rq: 0x%llx history_size:%d\n", (u64) entry->cfs_rq_p, temp_cfs_rq->pa_hist_idx);
+		// trace_printk("[ASSIGN] SIZE cfs_rq: 0x%llx history_size:%d\n", (u64) entry->cfs_rq_p, temp_cfs_rq->pa_hist_idx);
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
 			entry->age--;
-			if (entry->age < 0)
+			if ((s64) entry->age < 0)
 				entry->age = 0;
-			trace_printk("[ASSIGN] YOUNG cfs_rq: 0x%llx num_rqs: %d age: %d\n",
-				 (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
+			// trace_printk("[ASSIGN] YOUNG cfs_rq: 0x%llx num_rqs: %d age: %d\n",
+				//  (u64) cfs_rq, cfs_b->num_cfs_rq, entry->age);
 			break;
 		}
 #if 0
