@@ -3271,6 +3271,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 				cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
 			else
 				cfs_b->period = cfs_b->recommender_period;
+
 			cfs_b->quota = cfs_b->recommender_quota;
 		}
 
@@ -3327,10 +3328,10 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 				cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
 
 				if (cfs_b->recommender_period && cfs_b->recommender_quota) {
-					// if ((s64) (cfs_b->recommender_period - cfs_b->period_leeway) > 0)
-					// 	cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
-					// else
-					cfs_b->period = 100000000;
+					if ((s64) (cfs_b->recommender_period - cfs_b->period_leeway) > 0)
+						cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
+					else
+						cfs_b->period = cfs_b->recommender_period;
 					cfs_b->quota = cfs_b->recommender_quota;
 				}
 
@@ -5510,15 +5511,16 @@ reset_runtime:
 	cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
 
 	if (cfs_b->recommender_period && cfs_b->recommender_quota) {
-		// if ((s64) (cfs_b->recommender_period - cfs_b->period_leeway) > 0)
-		// 	cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
-		// else
-		cfs_b->period = 100000000;
+		if ((s64) (cfs_b->recommender_period - cfs_b->period_leeway) > 0)
+			cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
+		else
+			cfs_b->period = cfs_b->recommender_period;
+
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
 
 #if 1
-	trace_printk("[RECOMMEND] rqs: %d Agnostic quota:%llu period:%llu\n",
+	trace_printk("[RECOMMEND] rqs: %d Agnostic quota: %llu period: %llu\n",
 		     num_rqs, cfs_b->quota, cfs_b->period);
 #endif
 
