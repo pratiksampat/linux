@@ -5964,8 +5964,7 @@ next:
 static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, unsigned long flags)
 {
 	int throttled;
-	int i = 0;
-	struct rq_entry *entry;
+	int percentile_idx = 0;
 
 	/* no need to continue the timer with no bandwidth constraint */
 	if (cfs_b->quota == RUNTIME_INF)
@@ -5974,18 +5973,76 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	throttled = !list_empty(&cfs_b->throttled_cfs_rq);
 	cfs_b->nr_periods += overrun;
 
+	/*
+	   Period bound tracing - Trace the amount of runtime used
+	   within a period.
+
+	   Q: Why is this needed when we already have period agnostic
+	      tracing which is supposed to be more accurate?
+
+	   A: Sometimes, period bound tracing may not be able to get
+	   runtime, either due to high amounts of throttle or if all the
+	   quota is consumed.
+	   Also, in some cases when different threads overlap, it can
+	   so happen that the overlap is very small and the amount of
+	   resources requested for certain periods is lower. In such
+	   cases we can request for lower number of resources as well.
+	*/
+
+	if (!cfs_b->recommender_active)
+		goto period_timer_out;
+
+	if (!cfs_b->idle) {
+		cfs_b->pb_runtime_hist[cfs_b->pb_hist_idx] = cfs_b->quota - cfs_b->runtime;
+		cfs_b->pb_period_hist[cfs_b->pb_hist_idx] = cfs_b->period;
+		cfs_b->pb_hist_idx++;
+	}
+
+	if (cfs_b->pb_hist_idx < cfs_b->pb_recommender_history)
+		goto period_timer_out;
+
+	/* Period bound recommendation */
+	sort(cfs_b->pb_runtime_hist, cfs_b->pb_recommender_history, sizeof(u64), cmp_u64, NULL);
+	sort(cfs_b->pb_period_hist, cfs_b->pb_recommender_history, sizeof(u64), cmp_u64, NULL);
+	percentile_idx = DIV_ROUND_UP(99 * (cfs_b->pb_recommender_history - 1), 100);
+	cfs_b->pb_recommender_quota = cfs_b->pb_runtime_hist[percentile_idx];
+	cfs_b->pb_recommender_period = cfs_b->pb_period_hist[percentile_idx];
+	cfs_b->pb_millicpu = DIV_ROUND_UP_ULL(cfs_b->pb_recommender_quota * 100000, cfs_b->pb_recommender_period + cfs_b->pb_recommender_quota);
+
+	trace_printk("[RECOMMEND BOUND] quota: %llu period: %llu millicpu: %llu\n",
+			cfs_b->pb_recommender_quota, cfs_b->pb_recommender_period, cfs_b->pb_millicpu);
+
+	cfs_b->pb_hist_idx = 0;
+	memset(cfs_b->pb_period_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_period_hist));
+	memset(cfs_b->pb_runtime_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_runtime_hist));
+
+	/* Apply the recommendation */
+	cfs_b->recommender_period = cfs_b->pb_recommender_period;
+	cfs_b->recommender_quota = cfs_b->pb_recommender_quota;
+	if (cfs_b->pb_millicpu && cfs_b->cumulative_millicpu) {
+		if (cfs_b->pb_millicpu > cfs_b->cumulative_millicpu) {
+			cfs_b->recommender_period = cfs_b->pa_recommender_period;
+			cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+		}
+	} else if (cfs_b->cumulative_millicpu) {
+		cfs_b->recommender_period = cfs_b->pa_recommender_period;
+		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+	}
+	/* If period / quota < 5 ms add a bit more to avoid stalls */
+	if (cfs_b->recommender_period < 5000000)
+		cfs_b->recommender_period += 5000000;
+	if (cfs_b->recommender_quota < 5000000)
+		cfs_b->recommender_quota += 5000000;
+
+	if (cfs_b->recommender_period && cfs_b->recommender_quota){
+		cfs_b->period = cfs_b->recommender_period;
+		cfs_b->quota = cfs_b->recommender_quota;
+	}
+	trace_printk("[RECOMMEND] quota: %llu period: %llu\n", cfs_b->quota, cfs_b->period);
+
+period_timer_out:
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
-
-#if 0
-	rcu_read_lock();
-	list_for_each_entry_rcu(entry, &cfs_b->current_rq_list, list_node) {
-		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
-		trace_printk("[DO_TIMER %d] id: 0x%llx throttle:%d\n", i++,
-			entry->cfs_rq_p, temp_cfs_rq->throttled);
-	}
-	rcu_read_unlock();
-#endif
 
 	/*
 	 * idle depends on !throttled (for the case of a large deficit), and if
@@ -6297,6 +6354,7 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->pb_hist_idx = 0;
 	cfs_b->pb_runtime_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->pb_period_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
+	cfs_b->pb_millicpu = 0;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	INIT_LIST_HEAD(&cfs_b->current_rq_list);

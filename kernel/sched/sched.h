@@ -384,6 +384,7 @@ struct cfs_bandwidth {
 	int			pb_hist_idx;
 	u64			*pb_period_hist;
 	u64			*pb_runtime_hist;
+	u64			pb_millicpu;
 
 	/* Recommender interface helpers */
 	bool			recommender_active;
