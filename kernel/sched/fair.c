@@ -3238,7 +3238,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		cfs_rq->idle_nr_running++;
 		return;
 	}
-	if (cfs_b == NULL || cfs_b->recommender_status == 0)
+	if (cfs_b == NULL || !cfs_b->recommender_active)
 		return;
 
 	entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
@@ -3308,7 +3308,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		cfs_rq->idle_nr_running--;
 		return ;
 	}
-	if (cfs_b == NULL || cfs_b->recommender_status == 0)
+	if (cfs_b == NULL || !cfs_b->recommender_active)
 		return;
 
 	raw_spin_lock(&cfs_b->lock);
@@ -5996,6 +5996,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		cfs_b->pb_runtime_hist[cfs_b->pb_hist_idx] = cfs_b->quota - cfs_b->runtime;
 		cfs_b->pb_period_hist[cfs_b->pb_hist_idx] = cfs_b->period;
 		cfs_b->pb_hist_idx++;
+
+		if (throttled) {
+			cfs_b->curr_throttle++;
+		}
 	}
 
 	if (cfs_b->pb_hist_idx < cfs_b->pb_recommender_history)
@@ -6011,10 +6015,6 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 
 	trace_printk("[RECOMMEND BOUND] quota: %llu period: %llu millicpu: %llu\n",
 			cfs_b->pb_recommender_quota, cfs_b->pb_recommender_period, cfs_b->pb_millicpu);
-
-	cfs_b->pb_hist_idx = 0;
-	memset(cfs_b->pb_period_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_period_hist));
-	memset(cfs_b->pb_runtime_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_runtime_hist));
 
 	/* Apply the recommendation */
 	cfs_b->recommender_period = cfs_b->pb_recommender_period;
@@ -6034,13 +6034,45 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	if (cfs_b->recommender_quota < 5000000)
 		cfs_b->recommender_quota += 5000000;
 
-	if (cfs_b->recommender_period && cfs_b->recommender_quota){
+	/* Give higher quota if more than half of history is throttled */
+	if (cfs_b->curr_throttle > cfs_b->pa_recommender_history >> 1) {
+		cfs_b->trace_ulim = true;
+	}
+
+	if (cfs_b->recommender_period && cfs_b->recommender_quota && !cfs_b->trace_ulim){
 		cfs_b->period = cfs_b->recommender_period;
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
 	trace_printk("[RECOMMEND] quota: %llu period: %llu\n", cfs_b->quota, cfs_b->period);
 
+	cfs_b->pb_hist_idx = 0;
+	cfs_b->curr_throttle = 0;
+	memset(cfs_b->pb_period_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_period_hist));
+	memset(cfs_b->pb_runtime_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_runtime_hist));
+
 period_timer_out:
+	/*
+	  Stop tracing, give more entitlement and wait for the workload
+	  to stablize - Default 10 periods
+	  TODO: Update to scale multiple CPUs
+	*/
+	if (cfs_b->trace_ulim) {
+		cfs_b->curr_interval++;
+
+		if (cfs_b->curr_interval < 10) {
+			cfs_b->recommender_active = false;
+			cfs_b->period = ns_to_ktime(default_cfs_period());
+			cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
+			trace_printk("[ULIM] quota: %llu period: %llu curr_interval:%d\n",
+					cfs_b->quota, cfs_b->period, cfs_b->curr_interval);
+		} else {
+			cfs_b->curr_interval = 0;
+			cfs_b->trace_ulim = false;
+			cfs_b->recommender_active = true;
+		}
+	}
+
+
 	/* Refill extra burst quota even if cfs_b->idle */
 	__refill_cfs_bandwidth_runtime(cfs_b);
 
