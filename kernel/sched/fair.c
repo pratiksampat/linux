@@ -6066,11 +6066,21 @@ period_timer_out:
 			trace_printk("[ULIM] quota: %llu period: %llu curr_interval:%d\n",
 					cfs_b->quota, cfs_b->period, cfs_b->curr_interval);
 		} else {
+			struct rq_entry *entry, *temp_entry;
 			cfs_b->curr_interval = 0;
 			cfs_b->trace_ulim = false;
 			cfs_b->recommender_active = true;
-			cfs_b->num_cfs_rq = 1;
-			cfs_b->cumulative_millicpu = 0;
+
+			raw_spin_unlock_irqrestore(&cfs_b->lock, flags);
+			raw_spin_lock(&cfs_b->lock);
+			list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
+				list_del(&entry->list_node);
+				kfree(entry);
+			}
+			cfs_b->num_cfs_rq = 2;
+			// cfs_b->cumulative_millicpu = 0;
+			raw_spin_unlock(&cfs_b->lock);
+			raw_spin_lock_irqsave(&cfs_b->lock, flags);
 		}
 	}
 
