@@ -6069,6 +6069,8 @@ period_timer_out:
 			cfs_b->curr_interval = 0;
 			cfs_b->trace_ulim = false;
 			cfs_b->recommender_active = true;
+			cfs_b->num_cfs_rq = 1;
+			cfs_b->cumulative_millicpu = 0;
 		}
 	}
 
