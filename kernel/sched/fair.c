@@ -3238,15 +3238,12 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		cfs_rq->idle_nr_running++;
 		return;
 	}
-
-	if (cfs_b->trace_ulim || cfs_b->recommender_active) {
-		entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
-		entry->cfs_rq_p = (u64) cfs_rq;
-		INIT_LIST_HEAD(&entry->list_node);
-	}
-
 	if (cfs_b == NULL || !cfs_b->recommender_active)
 		return;
+
+	entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
+	entry->cfs_rq_p = (u64) cfs_rq;
+	INIT_LIST_HEAD(&entry->list_node);
 
 	raw_spin_lock(&cfs_b->lock);
 	list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
@@ -3311,54 +3308,47 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		cfs_rq->idle_nr_running--;
 		return ;
 	}
-
-	if (cfs_b->trace_ulim)
-		goto do_list;
-
 	if (cfs_b == NULL || !cfs_b->recommender_active)
 		return;
 
-do_list:
 	raw_spin_lock(&cfs_b->lock);
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
-			if (!cfs_b->trace_ulim) {
-				if (cfs_rq->reco_applied) {
-					if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - cfs_b->quota_leeway) > 5000000)
-						cfs_b->pa_recommender_quota = cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - cfs_b->quota_leeway;
-					if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 5000)
-						cfs_b->cumulative_millicpu -= cfs_rq->millicpu;
-					if (cfs_b->cumulative_millicpu)
-						cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
-				}
-
-				if (cfs_b->pa_recommender_quota && cfs_b->pa_recommender_period) {
-					cfs_b->recommender_period = cfs_b->pa_recommender_period;
-					cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
-
-					if (cfs_b->recommender_period && cfs_b->recommender_quota) {
-						if ((s64) (cfs_b->recommender_period - cfs_b->period_leeway) > 0)
-							cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
-						else
-							cfs_b->period = cfs_b->recommender_period;
-						cfs_b->quota = cfs_b->recommender_quota;
-					}
-
-	#if 1
-					trace_printk("[DEQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d cum_cpu:%lld\n",
-						cfs_b->num_cfs_rq,
-						(u64) cfs_rq,
-						cfs_rq->P95_runtime,
-						cfs_rq->P95_yield_time,
-						cfs_b->quota,
-						cfs_b->period,
-						cfs_rq->reco_applied,
-						cfs_b->cumulative_millicpu);
-	#endif
-				}
-
-				cfs_rq->reco_applied = false;
+			if (cfs_rq->reco_applied) {
+				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - cfs_b->quota_leeway) > 5000000)
+					cfs_b->pa_recommender_quota = cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - cfs_b->quota_leeway;
+				if ((s64) (cfs_b->cumulative_millicpu - cfs_rq->millicpu) > 5000)
+					cfs_b->cumulative_millicpu -= cfs_rq->millicpu;
+				if (cfs_b->cumulative_millicpu)
+					cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
 			}
+
+			if (cfs_b->pa_recommender_quota && cfs_b->pa_recommender_period) {
+				cfs_b->recommender_period = cfs_b->pa_recommender_period;
+				cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+
+				if (cfs_b->recommender_period && cfs_b->recommender_quota) {
+					if ((s64) (cfs_b->recommender_period - cfs_b->period_leeway) > 0)
+						cfs_b->period = cfs_b->recommender_period - cfs_b->period_leeway;
+					else
+						cfs_b->period = cfs_b->recommender_period;
+					cfs_b->quota = cfs_b->recommender_quota;
+				}
+
+#if 1
+				trace_printk("[DEQUEUE] num_rqs: %d cfs_rq: 0x%llx runtime: %llu yeild_time: %llu quota: %llu period: %llu reco:%d cum_cpu:%lld\n",
+					cfs_b->num_cfs_rq,
+					(u64) cfs_rq,
+					cfs_rq->P95_runtime,
+					cfs_rq->P95_yield_time,
+					cfs_b->quota,
+					cfs_b->period,
+					cfs_rq->reco_applied,
+					cfs_b->cumulative_millicpu);
+#endif
+			}
+
+			cfs_rq->reco_applied = false;
 
 			list_del(&entry->list_node);
 			kfree(entry);
