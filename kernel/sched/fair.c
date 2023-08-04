@@ -3248,6 +3248,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	raw_spin_lock(&cfs_b->lock);
 	list_add_tail_rcu(&entry->list_node, &cfs_b->current_rq_list);
 	cfs_b->num_cfs_rq++;
+#if 0
 	if (cfs_rq->P95_runtime && cfs_rq->P95_yield_time) {
 
 		if (cfs_b->num_cfs_rq == 1) {
@@ -3286,6 +3287,7 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 				cfs_b->cumulative_millicpu);
 #endif
 	}
+#endif
 
 	raw_spin_unlock(&cfs_b->lock);
 }
@@ -3314,6 +3316,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	raw_spin_lock(&cfs_b->lock);
 	list_for_each_entry_safe(entry, temp_entry, &cfs_b->current_rq_list, list_node) {
 		if (entry->cfs_rq_p == (u64) cfs_rq) {
+#if 0
 			if (cfs_rq->reco_applied) {
 				if ((s64) (cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - cfs_b->quota_leeway) > 5000000)
 					cfs_b->pa_recommender_quota = cfs_b->pa_recommender_quota - cfs_rq->P95_runtime - cfs_b->quota_leeway;
@@ -3349,7 +3352,7 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			}
 
 			cfs_rq->reco_applied = false;
-
+#endif
 			list_del(&entry->list_node);
 			kfree(entry);
 			cfs_b->num_cfs_rq--;
@@ -5507,6 +5510,18 @@ reset_runtime:
 
 	cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
 
+	if (cfs_b->cumulative_millicpu > cfs_b->max_cumulative_millicpu) {
+		cfs_b->max_pa_recommender_quota = cfs_b->pa_recommender_quota;
+		cfs_b->max_pa_recommender_period = cfs_b->pa_recommender_period;
+		cfs_b->max_cumulative_millicpu = cfs_b->cumulative_millicpu;
+	}
+
+	if (cfs_b->max_cumulative_millicpu) {
+		cfs_b->pa_recommender_quota = cfs_b->max_pa_recommender_quota;
+		cfs_b->pa_recommender_period = cfs_b->max_pa_recommender_period;
+		cfs_b->cumulative_millicpu = cfs_b->max_cumulative_millicpu;
+	}
+#if 0
 	cfs_b->recommender_period = cfs_b->pa_recommender_period;
 	cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
 
@@ -5518,10 +5533,10 @@ reset_runtime:
 
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
-
+#endif
 #if 1
-	trace_printk("[RECOMMEND] rqs: %d Agnostic quota: %llu period: %llu\n",
-		     num_rqs, cfs_b->quota, cfs_b->period);
+	trace_printk("[RECOMMEND] rqs: %d Agnostic quota: %llu period: %llu millicpu: %llu\n",
+		     num_rqs, cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period, cfs_b->cumulative_millicpu);
 #endif
 
 assign_out:
@@ -6047,6 +6062,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 
 	cfs_b->pb_hist_idx = 0;
 	cfs_b->curr_throttle = 0;
+	cfs_b->max_cumulative_millicpu = 0;
 	memset(cfs_b->pb_period_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_period_hist));
 	memset(cfs_b->pb_runtime_hist, 0, cfs_b->pb_recommender_history * sizeof(cfs_b->pb_runtime_hist));
 
@@ -6069,8 +6085,8 @@ period_timer_out:
 			cfs_b->curr_interval = 0;
 			cfs_b->trace_ulim = false;
 			cfs_b->recommender_active = true;
-			cfs_b->num_cfs_rq = 2;
-			// cfs_b->cumulative_millicpu = 0;
+			cfs_b->num_cfs_rq = 1;
+			cfs_b->cumulative_millicpu = 0;
 		}
 	}
 

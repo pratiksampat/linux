@@ -375,6 +375,9 @@ struct cfs_bandwidth {
 	/* Recommendations from the algorithm */
 	u64			pa_recommender_period;
 	u64			pa_recommender_quota;
+	u64			max_pa_recommender_period;
+	u64			max_pa_recommender_quota;
+	u64			max_cumulative_millicpu;
 	u64			pb_recommender_period;
 	u64			pb_recommender_quota;
 	u64			recommender_period;
