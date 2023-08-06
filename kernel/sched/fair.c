@@ -6053,10 +6053,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	/* Apply the recommendation */
 	cfs_b->recommender_period = cfs_b->pb_recommender_period;
 	cfs_b->recommender_quota = cfs_b->pb_recommender_quota;
-	if (cfs_b->pb_millicpu && cfs_b->cumulative_millicpu) {
-		if (cfs_b->pb_millicpu < cfs_b->cumulative_millicpu) {
-			cfs_b->recommender_period = cfs_b->pa_recommender_period;
-			cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
+	if (cfs_b->pb_millicpu && cfs_b->max_cumulative_millicpu) {
+		if (cfs_b->pb_millicpu < cfs_b->max_cumulative_millicpu) {
+			cfs_b->recommender_period = cfs_b->max_pa_recommender_period;
+			cfs_b->recommender_quota = cfs_b->max_pa_recommender_quota;
 		}
 		/* If the quota is similar (5-7ms), choose the one with higher period */
 	} else if (cfs_b->cumulative_millicpu) {
