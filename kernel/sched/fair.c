@@ -6035,7 +6035,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	cfs_b->recommender_period = cfs_b->pb_recommender_period;
 	cfs_b->recommender_quota = cfs_b->pb_recommender_quota;
 	if (cfs_b->pb_millicpu && cfs_b->cumulative_millicpu) {
-		if (cfs_b->pb_millicpu > cfs_b->cumulative_millicpu) {
+		if (cfs_b->pb_millicpu < cfs_b->cumulative_millicpu) {
 			cfs_b->recommender_period = cfs_b->pa_recommender_period;
 			cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
 		}
@@ -6058,7 +6058,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		cfs_b->period = cfs_b->recommender_period;
 		cfs_b->quota = cfs_b->recommender_quota;
 	}
-	trace_printk("[RECOMMEND] quota: %llu period: %llu\n", cfs_b->quota, cfs_b->period);
+	trace_printk("[FINAL] quota: %llu period: %llu\n", cfs_b->quota, cfs_b->period);
 
 	cfs_b->pb_hist_idx = 0;
 	cfs_b->curr_throttle = 0;
