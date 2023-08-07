@@ -6008,6 +6008,20 @@ next:
 	return throttled;
 }
 
+bool similar(u64 n1, u64 n2) {
+	u64 n3 = 0;
+
+	if (n1 > n2) {
+		n3 = n1 - n2;
+	} else {
+		n3 = n2 - n1;
+	}
+
+	if (n3 < 10000000)
+		return true;
+	return false;
+}
+
 /*
  * Responsible for refilling a task_group's bandwidth and unthrottling its
  * cfs_rqs as appropriate. If there has been no activity within the last
@@ -6079,6 +6093,12 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 			cfs_b->recommender_quota = cfs_b->max_pa_recommender_quota;
 		}
 		/* If the quota is similar (5-7ms), choose the one with higher period */
+		if (similar(cfs_b->pb_recommender_quota, cfs_b->max_pa_recommender_quota)) {
+			if (cfs_b->max_pa_recommender_period > cfs_b->pb_recommender_period)
+				cfs_b->recommender_period = cfs_b->max_pa_recommender_period;
+			else
+				cfs_b->recommender_period = cfs_b->pb_recommender_period;
+		}
 	} else if (cfs_b->cumulative_millicpu) {
 		cfs_b->recommender_period = cfs_b->pa_recommender_period;
 		cfs_b->recommender_quota = cfs_b->pa_recommender_quota;
