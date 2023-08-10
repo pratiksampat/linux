@@ -5548,6 +5548,9 @@ reset_runtime:
 	if (cfs_b->cumulative_millicpu)
 		cfs_b->pa_recommender_period = DIV_ROUND_UP_ULL(cfs_b->pa_recommender_quota * 100000, cfs_b->cumulative_millicpu);
 
+	trace_printk("[RECOMMEND PA] rqs: %d Agnostic quota: %llu period: %llu millicpu: %llu\n",
+		     num_rqs, cfs_b->pa_recommender_quota, cfs_b->pa_recommender_period, cfs_b->cumulative_millicpu);
+
 	if (cfs_b->cumulative_millicpu > cfs_b->max_cumulative_millicpu) {
 		cfs_b->max_pa_recommender_quota = cfs_b->pa_recommender_quota;
 		cfs_b->max_pa_recommender_period = cfs_b->pa_recommender_period;
