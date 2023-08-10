@@ -6088,7 +6088,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	cfs_b->recommender_period = cfs_b->pb_recommender_period;
 	cfs_b->recommender_quota = cfs_b->pb_recommender_quota;
 	if (cfs_b->pb_millicpu && cfs_b->max_cumulative_millicpu) {
-		if (cfs_b->pb_millicpu < cfs_b->max_cumulative_millicpu) {
+		if (cfs_b->pb_millicpu > cfs_b->max_cumulative_millicpu) {
 			cfs_b->recommender_period = cfs_b->max_pa_recommender_period;
 			cfs_b->recommender_quota = cfs_b->max_pa_recommender_quota;
 		}
