@@ -6129,7 +6129,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 		cfs_b->recommender_quota += 5000000;
 
 	/* Give higher quota if more than half of history is throttled */
-	if (cfs_b->curr_throttle > cfs_b->pa_recommender_history >> 1) {
+	if (cfs_b->curr_throttle >= cfs_b->pa_recommender_history) {
 		cfs_b->trace_ulim = true;
 	}
 
