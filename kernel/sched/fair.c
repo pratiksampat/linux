@@ -6097,7 +6097,7 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	percentile_idx = DIV_ROUND_UP(99 * (cfs_b->pb_recommender_history - 1), 100);
 	cfs_b->pb_recommender_quota = cfs_b->pb_runtime_hist[percentile_idx];
 	cfs_b->pb_recommender_period = cfs_b->pb_period_hist[percentile_idx];
-	cfs_b->pb_millicpu = DIV_ROUND_UP_ULL(cfs_b->pb_recommender_quota * 100000, cfs_b->pb_recommender_period + cfs_b->pb_recommender_quota);
+	cfs_b->pb_millicpu = DIV_ROUND_UP_ULL(cfs_b->pb_recommender_quota * 100000, cfs_b->pb_recommender_period);
 
 	trace_printk("[RECOMMEND BOUND] quota: %llu period: %llu millicpu: %llu\n",
 			cfs_b->pb_recommender_quota, cfs_b->pb_recommender_period, cfs_b->pb_millicpu);
