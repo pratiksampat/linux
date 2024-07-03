@@ -142,11 +142,79 @@ static void test_sync_vmsa(uint32_t type, uint64_t policy)
 	kvm_vm_free(vm);
 }
 
+static void sev_guest_status_assert(struct kvm_vm *vm, uint32_t type)
+{
+	struct kvm_sev_guest_status status;
+	bool cond;
+	int ret;
+
+	ret = __vm_sev_ioctl(vm, KVM_SEV_GUEST_STATUS, &status);
+	cond = type == KVM_X86_SEV_VM ? !ret : ret;
+	TEST_ASSERT(cond,
+		    "KVM_SEV_GUEST_STATUS should fail, invalid VM Type.");
+}
+
+/*
+ * Test for SEV ioctl launch path
+ * VMs of the type SEV and SEV-ES are created, however they are launched with
+ * an empty policy to observe the effect on the control flow of launching a VM.
+ *
+ * SEV - Expected to pass through the path of launch start, update, measure,
+ * and finish. vcpu_run expected to fail with error KVM_EXIT_IO.
+ *
+ * SEV-ES - Expected to fail the launch start. Post which legitimate calls to
+ * update, measure, and finish also expected to fail cascadingly.
+ */
+static void test_sev_launch(void *guest_code, uint32_t type, uint64_t policy)
+{
+	struct kvm_vcpu *vcpu;
+	struct kvm_vm *vm;
+	struct ucall uc;
+	bool cond;
+	int ret;
+
+	vm = vm_sev_create_with_one_vcpu(type, guest_code, &vcpu);
+	ret = sev_vm_launch_start(vm, 0);
+	cond = type == KVM_X86_SEV_VM ? !ret : ret;
+	TEST_ASSERT(cond,
+		    "KVM_SEV_LAUNCH_START should fail, invalid policy.");
+
+	ret = sev_vm_launch_update(vm, policy);
+	cond = type == KVM_X86_SEV_VM ? !ret : ret;
+	TEST_ASSERT(cond,
+		    "KVM_SEV_LAUNCH_UPDATE should fail, invalid policy.");
+	sev_guest_status_assert(vm, type);
+
+	ret = sev_vm_launch_measure(vm, alloca(256));
+	cond = type == KVM_X86_SEV_VM ? !ret : ret;
+	TEST_ASSERT(cond,
+		    "KVM_SEV_LAUNCH_MEASURE should fail, invalid policy.");
+	sev_guest_status_assert(vm, type);
+
+	ret = sev_vm_launch_finish(vm);
+	cond = type == KVM_X86_SEV_VM ? !ret : ret;
+	TEST_ASSERT(cond,
+		    "KVM_SEV_LAUNCH_FINISH should fail, invalid policy.");
+	sev_guest_status_assert(vm, type);
+
+	vcpu_run(vcpu);
+	get_ucall(vcpu, &uc);
+	cond = type == KVM_X86_SEV_VM ?
+		vcpu->run->exit_reason == KVM_EXIT_IO :
+		vcpu->run->exit_reason == KVM_EXIT_FAIL_ENTRY;
+	TEST_ASSERT(cond,
+		    "vcpu_run should fail, invalid policy.");
+
+	kvm_vm_free(vm);
+}
+
 static void test_sev(void *guest_code, uint32_t type, uint64_t policy)
 {
 	struct kvm_vcpu *vcpu;
 	struct kvm_vm *vm;
 	struct ucall uc;
+
+	test_sev_launch(guest_code, type, policy);
 
 	vm = vm_sev_create_with_one_vcpu(type, guest_code, &vcpu);
 
