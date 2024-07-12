@@ -2120,11 +2120,11 @@ vm_paddr_t __vm_phy_pages_alloc(struct kvm_vm *vm, size_t num,
 		abort();
 	}
 
-	for (pg = base; pg < base + num; ++pg) {
+	for (pg = base; pg < base + num; ++pg)
 		sparsebit_clear(region->unused_phy_pages, pg);
-		if (protected)
-			sparsebit_set(region->protected_phy_pages, pg);
-	}
+
+	if (protected)
+		vm_mem_set_protected(vm, memslot, base << vm->page_shift, num);
 
 	return base * vm->page_size;
 }
