@@ -87,7 +87,21 @@ static void pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
 	__pre_fault_memory(vcpu, gpa, size, left, false);
 }
 
-static void test_pre_fault_memory_sev(unsigned long vm_type, bool private)
+
+static void falloc_region(struct kvm_vm *vm, bool punch_hole)
+{
+	int ctr, ret, flags = FALLOC_FL_KEEP_SIZE;
+	struct userspace_mem_region *region;
+
+	hash_for_each(vm->regions.slot_hash, ctr, region, slot_node) {
+		if (punch_hole)
+			flags |= FALLOC_FL_PUNCH_HOLE;
+		ret = fallocate(region->region.guest_memfd, flags, 0, PAGE_SIZE * TEST_NPAGES);
+		TEST_ASSERT(!ret, "fallocate should succeed.");
+	}
+}
+
+static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool falloc_hole)
 {
 	struct kvm_vcpu *vcpu;
 	struct kvm_vm *vm;
@@ -115,6 +129,7 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private)
 		ret = snp_vm_launch(vm, policy, 0);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_START, ret));
 
+		falloc_region(vm, falloc_hole);
 		/*
 		 * NOTE: For SNP, the pre-faulting of private pages needs to be
 		 * done after SNP_LAUNCH_START, since that is the point when the
@@ -144,6 +159,7 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private)
 
 		ret = snp_vm_launch_update(vm, KVM_SEV_SNP_PAGE_TYPE_NORMAL);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_UPDATE, ret));
+		falloc_region(vm, falloc_hole);
 
 		ret = snp_vm_launch_finish(vm, 0);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_FINISH, ret));
@@ -156,6 +172,7 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private)
 		__pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0, private);
 		__pre_fault_memory(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE, private);
 		__pre_fault_memory(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE, private);
+		falloc_region(vm, falloc_hole);
 	} else {
 		uint32_t policy = (vm_type == KVM_X86_SEV_ES_VM) ? SEV_POLICY_ES : 0;
 		void *measurement;
@@ -193,6 +210,14 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private)
 
 	vcpu_run(vcpu);
 
+	/* Expect SHUTDOWN when we fallocate using PUNCH_HOLE */
+	if (vm->type == KVM_X86_SNP_VM && falloc_hole) {
+		TEST_ASSERT(vcpu->run->exit_reason == KVM_EXIT_SHUTDOWN,
+			    "Wanted SYSTEM_EVENT, got %s",
+			    exit_reason_str(vcpu->run->exit_reason));
+		goto out;
+	}
+
 	if (vm->type == KVM_X86_SEV_ES_VM || vm->type == KVM_X86_SNP_VM) {
 		TEST_ASSERT(vcpu->run->exit_reason == KVM_EXIT_SYSTEM_EVENT,
 			    "Wanted SYSTEM_EVENT, got %s",
@@ -228,7 +253,8 @@ static void test_pre_fault_memory(unsigned long vm_type, bool private)
 	case KVM_X86_SEV_VM:
 	case KVM_X86_SEV_ES_VM:
 	case KVM_X86_SNP_VM:
-		test_pre_fault_memory_sev(vm_type, private);
+		test_pre_fault_memory_sev(vm_type, private, false);
+		test_pre_fault_memory_sev(vm_type, private, true);
 		break;
 	default:
 		abort();
