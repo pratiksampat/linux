@@ -36,13 +36,14 @@ static void guest_code_sev(void)
 }
 
 static void __pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
-			       u64 left, bool private)
+			       u64 left, bool private, bool expect_fail)
 {
 	struct kvm_pre_fault_memory range = {
 		.gpa = gpa,
 		.size = size,
 		.flags = 0,
 	};
+	bool cond;
 	u64 prev;
 	int ret, save_errno;
 
@@ -56,12 +57,14 @@ static void __pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
 			    ret < 0 ? "failure" : "success");
 	} while (ret >= 0 ? range.size : save_errno == EINTR);
 
-	TEST_ASSERT(range.size == left,
-		    "Completed with %lld bytes left, expected %" PRId64,
+	cond = (range.size == left);
+	TEST_ASSERT(expect_fail ? !cond : cond,
+		    "[EXPECT %s] Completed with %lld bytes left, expected %" PRId64,
+		    expect_fail ? "FAIL" : "PASS",
 		    range.size, left);
 
 	if (left == 0) {
-		__TEST_ASSERT_VM_VCPU_IOCTL(!ret, "KVM_PRE_FAULT_MEMORY", ret, vcpu->vm);
+		cond = !ret;
 	} else {
 		/*
 		 * For shared memory, no memory slot causes RET_PF_EMULATE. It
@@ -76,17 +79,31 @@ static void __pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
 		 *  good to distinguish between these cases to tighten up the
 		 *  error-checking.
 		 */
-		__TEST_ASSERT_VM_VCPU_IOCTL(ret && (save_errno == EFAULT || save_errno == ENOENT),
-					    "KVM_PRE_FAULT_MEMORY", ret, vcpu->vm);
+		cond = ret && (save_errno == EFAULT || save_errno == ENOENT);
 	}
+
+	TEST_ASSERT(expect_fail ? !cond : cond,
+		    "[EXPECT %s] KVM_PRE_FAULT_MEMORY",
+		    expect_fail ? "FAIL" : "PASS");
 }
 
-static void pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
-			     u64 left)
+static void pre_fault_memory_private(struct kvm_vcpu *vcpu, u64 gpa,
+				     u64 size, u64 left)
 {
-	__pre_fault_memory(vcpu, gpa, size, left, false);
+	__pre_fault_memory(vcpu, gpa, size, left, true, false);
 }
 
+static void pre_fault_memory_shared(struct kvm_vcpu *vcpu, u64 gpa,
+				    u64 size, u64 left)
+{
+	__pre_fault_memory(vcpu, gpa, size, left, false, false);
+}
+
+static void pre_fault_memory_negative(struct kvm_vcpu *vcpu, u64 gpa,
+					   u64 size, u64 left, bool private)
+{
+	__pre_fault_memory(vcpu, gpa, size, left, private, true);
+}
 
 static void falloc_region(struct kvm_vm *vm, bool punch_hole)
 {
@@ -126,6 +143,8 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool 
 		uint64_t policy = SNP_POLICY_SMT | SNP_POLICY_RSVD_MBO;
 		int ret;
 
+		pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
+
 		ret = snp_vm_launch(vm, policy, 0);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_START, ret));
 
@@ -149,12 +168,12 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool 
 			 * access by the guest and so that the expected gmem
 			 * backing pages are used.
 			 */
+			pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
 			vm_mem_set_private(vm, TEST_GPA, TEST_SIZE);
+			pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, true);
 		} else {
 			/* Shared pages can be pre-faulted any time. */
-			pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0);
-			pre_fault_memory(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-			pre_fault_memory(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+			pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, true);
 		}
 
 		ret = snp_vm_launch_update(vm, KVM_SEV_SNP_PAGE_TYPE_NORMAL);
@@ -169,25 +188,25 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool 
 		 * ranges should work regardless of whether the pages were
 		 * encrypted as part of setting up initial guest state.
 		 */
-		__pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0, private);
-		__pre_fault_memory(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE, private);
-		__pre_fault_memory(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE, private);
+		pre_fault_memory_private(vcpu, TEST_GPA, SZ_2M, 0);
+		pre_fault_memory_private(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+		pre_fault_memory_private(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
 		falloc_region(vm, falloc_hole);
 	} else {
 		uint32_t policy = (vm_type == KVM_X86_SEV_ES_VM) ? SEV_POLICY_ES : 0;
 		void *measurement;
 		int ret;
 
-		pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0);
-		pre_fault_memory(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-		pre_fault_memory(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+		pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
+		pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+		pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
 
 		ret = sev_vm_launch_start(vm, policy);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_START, ret));
 
-		pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0);
-		pre_fault_memory(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-		pre_fault_memory(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+		pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
+		pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+		pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
 
 		ret = sev_vm_launch_update(vm, policy);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_UPDATE_DATA, ret));
@@ -196,16 +215,16 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool 
 		ret = sev_vm_launch_measure(vm, measurement);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_MEASURE, ret));
 
-		pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0);
-		pre_fault_memory(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-		pre_fault_memory(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+		pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
+		pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+		pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
 
 		ret = sev_vm_launch_finish(vm);
 		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_FINISH, ret));
 
-		pre_fault_memory(vcpu, TEST_GPA, SZ_2M, 0);
-		pre_fault_memory(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-		pre_fault_memory(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+		pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
+		pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+		pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
 	}
 
 	vcpu_run(vcpu);
