@@ -6134,8 +6134,10 @@ static int do_sched_cfs_period_timer(struct cfs_bandwidth *cfs_b, int overrun, u
 	}
 
 	if (cfs_b->recommender_period && cfs_b->recommender_quota && !cfs_b->trace_ulim){
-		cfs_b->period = cfs_b->recommender_period;
-		cfs_b->quota = cfs_b->recommender_quota;
+		if (cfs_b->recommender_status == 2) {
+			cfs_b->period = cfs_b->recommender_period;
+			cfs_b->quota = cfs_b->recommender_quota;
+		}
 	}
 	trace_printk("[FINAL] quota: %llu period: %llu\n", cfs_b->quota, cfs_b->period);
 
@@ -6171,8 +6173,10 @@ period_timer_out:
 
 		if (cfs_b->curr_interval < 10) {
 			cfs_b->recommender_active = false;
-			cfs_b->period = ns_to_ktime(default_cfs_period());
-			cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
+			if (cfs_b->recommender_status == 2) {
+				cfs_b->period = ns_to_ktime(default_cfs_period());
+				cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
+			}
 			trace_printk("[ULIM] quota: %llu period: %llu curr_interval:%d\n",
 					cfs_b->quota, cfs_b->period, cfs_b->curr_interval);
 		} else {
