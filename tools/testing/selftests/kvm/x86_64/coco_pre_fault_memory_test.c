@@ -24,6 +24,12 @@ static void guest_code_sev(void)
 		uint64_t *src = (uint64_t *)(TEST_GVA + i * PAGE_SIZE);
 
 		val = *src;
+		/* Validate the data stored in the pages */
+		if ((i < TEST_NPAGES / 2 && val == i + 1) ||
+		    (i >= TEST_NPAGES / 2 && val == 0)) {
+			continue;
+		}
+		GUEST_FAIL("Inconsistent view of memory values in guest");
 	}
 
 	if (rdmsr(MSR_AMD64_SEV) & MSR_AMD64_SEV_ES_ENABLED) {
@@ -124,6 +130,7 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool 
 	struct kvm_vcpu *vcpu;
 	struct kvm_vm *vm;
 	struct ucall uc;
+	int i;
 
 	vm = vm_sev_create_with_one_vcpu(vm_type, guest_code_sev, &vcpu);
 
@@ -139,6 +146,19 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private, bool 
 		vm_mem_set_protected(vm, TEST_SLOT, TEST_GPA, TEST_NPAGES);
 
 	virt_map(vm, TEST_GVA, TEST_GPA, TEST_NPAGES);
+
+	/*
+	 * Populate the pages to compare data read from the guest
+	 * Populate the first half with data and second half as all zeros.
+	 */
+	for (i = 0; i < TEST_NPAGES; i++) {
+		uint64_t *hva = addr_gva2hva(vm, TEST_GVA + i * PAGE_SIZE);
+
+		if (i < TEST_NPAGES / 2)
+			*hva = i + 1;
+		else
+			*hva = 0;
+	}
 
 	if (vm_type == KVM_X86_SNP_VM) {
 		uint64_t policy = SNP_POLICY_SMT | SNP_POLICY_RSVD_MBO;
