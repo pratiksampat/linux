@@ -153,6 +153,137 @@ static void falloc_hole_punch_region(struct kvm_vm *vm)
 	__falloc_region(vm, true);
 }
 
+static void pre_fault_memory_snp(struct kvm_vcpu *vcpu, struct kvm_vm *vm,
+				 bool private, enum falloc_test_type f_type)
+{
+
+	uint64_t policy = SNP_POLICY_SMT | SNP_POLICY_RSVD_MBO;
+	int ret;
+
+	if (f_type == ALLOC_BEFORE_SNP_LAUNCH_UPDATE ||
+		f_type == ALLOC_DEALLOC_BEFORE_SNP_LAUNCH_UPDATE) {
+		falloc_region(vm);
+	}
+
+	pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
+
+	if (f_type == DEALLOC_BEFORE_SNP_LAUNCH_UPDATE ||
+		f_type == ALLOC_DEALLOC_BEFORE_SNP_LAUNCH_UPDATE) {
+		falloc_hole_punch_region(vm);
+	}
+
+	ret = snp_vm_launch(vm, policy, 0);
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_START, ret));
+
+	if (f_type == ALLOC_BEFORE_SNP_LAUNCH_UPDATE ||
+		f_type == ALLOC_DEALLOC_BEFORE_SNP_LAUNCH_UPDATE) {
+		falloc_region(vm);
+	}
+
+	if (f_type == DEALLOC_BEFORE_SNP_LAUNCH_UPDATE ||
+		f_type == ALLOC_DEALLOC_BEFORE_SNP_LAUNCH_UPDATE) {
+		falloc_hole_punch_region(vm);
+	}
+	/*
+	* NOTE: For SNP, the pre-faulting of private pages needs to be
+	* done after SNP_LAUNCH_START, since that is the point when the
+	* guest ASID is bound to the SNP context, and that operation
+	* will fail if RMP entries have already been setup that
+	* reference the ASID being bound.
+	*
+	* Furthermore, pre-faulting must be skipped for any pages that
+	* are to be part of the initial encrypted/measured guest state,
+	* since those pages must initially be in a shared state in the
+	* RMP table.
+	*/
+	if (private) {
+		/*
+		* Make sure when pages are pre-faulted later after
+		* finalization they are treated the same as a private
+		* access by the guest and so that the expected gmem
+		* backing pages are used.
+		*/
+		pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
+		vm_mem_set_private(vm, TEST_GPA, TEST_SIZE);
+		pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, true);
+	} else {
+		/* Shared pages can be pre-faulted any time. */
+		pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, true);
+	}
+
+	ret = snp_vm_launch_update(vm, KVM_SEV_SNP_PAGE_TYPE_NORMAL);
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_UPDATE, ret));
+
+	if (f_type == ALLOC_AFTER_SNP_LAUNCH_UPDATE ||
+		f_type == ALLOC_DEALLOC_AFTER_SNP_LAUNCH_UPDATE) {
+		falloc_region(vm);
+	}
+
+	if (f_type == DEALLOC_AFTER_SNP_LAUNCH_UPDATE ||
+		f_type == ALLOC_DEALLOC_AFTER_SNP_LAUNCH_UPDATE) {
+		falloc_hole_punch_region(vm);
+	}
+
+	ret = snp_vm_launch_finish(vm, 0);
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_FINISH, ret));
+
+	/*
+	* After finalization, pre-faulting either private or shared
+	* ranges should work regardless of whether the pages were
+	* encrypted as part of setting up initial guest state.
+	*/
+	pre_fault_memory_private(vcpu, TEST_GPA, SZ_2M, 0);
+	pre_fault_memory_private(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+	pre_fault_memory_private(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+
+	if (f_type == ALLOC_AFTER_SNP_LAUNCH_UPDATE ||
+		f_type == ALLOC_DEALLOC_AFTER_SNP_LAUNCH_UPDATE) {
+		falloc_region(vm);
+	}
+
+	if (f_type == DEALLOC_AFTER_SNP_LAUNCH_UPDATE ||
+		f_type == ALLOC_DEALLOC_AFTER_SNP_LAUNCH_UPDATE) {
+		falloc_hole_punch_region(vm);
+	}
+}
+
+static void pre_fault_memory_sev(unsigned long vm_type, struct kvm_vcpu *vcpu,
+				 struct kvm_vm *vm)
+{
+	uint32_t policy = (vm_type == KVM_X86_SEV_ES_VM) ? SEV_POLICY_ES : 0;
+	void *measurement;
+	int ret;
+
+	pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
+	pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+	pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+
+	ret = sev_vm_launch_start(vm, policy);
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_START, ret));
+
+	pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
+	pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+	pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+
+	ret = sev_vm_launch_update(vm, policy);
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_UPDATE_DATA, ret));
+
+	measurement = alloca(256);
+	ret = sev_vm_launch_measure(vm, measurement);
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_MEASURE, ret));
+
+	pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
+	pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+	pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+
+	ret = sev_vm_launch_finish(vm);
+	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_FINISH, ret));
+
+	pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
+	pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
+	pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
+}
+
 static void test_pre_fault_memory_sev(unsigned long vm_type, bool private,
 				      enum falloc_test_type f_type)
 {
@@ -189,129 +320,10 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private,
 			*hva = 0;
 	}
 
-	if (vm_type == KVM_X86_SNP_VM) {
-		uint64_t policy = SNP_POLICY_SMT | SNP_POLICY_RSVD_MBO;
-		int ret;
-
-		if (f_type == ALLOC_BEFORE_SNP_LAUNCH_UPDATE ||
-		    f_type == ALLOC_DEALLOC_BEFORE_SNP_LAUNCH_UPDATE) {
-			falloc_region(vm);
-		}
-
-		pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
-
-		if (f_type == DEALLOC_BEFORE_SNP_LAUNCH_UPDATE ||
-		    f_type == ALLOC_DEALLOC_BEFORE_SNP_LAUNCH_UPDATE) {
-			falloc_hole_punch_region(vm);
-		}
-
-		ret = snp_vm_launch(vm, policy, 0);
-		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_START, ret));
-
-		if (f_type == ALLOC_BEFORE_SNP_LAUNCH_UPDATE ||
-		    f_type == ALLOC_DEALLOC_BEFORE_SNP_LAUNCH_UPDATE) {
-			falloc_region(vm);
-		}
-
-		if (f_type == DEALLOC_BEFORE_SNP_LAUNCH_UPDATE ||
-		    f_type == ALLOC_DEALLOC_BEFORE_SNP_LAUNCH_UPDATE) {
-			falloc_hole_punch_region(vm);
-		}
-		/*
-		 * NOTE: For SNP, the pre-faulting of private pages needs to be
-		 * done after SNP_LAUNCH_START, since that is the point when the
-		 * guest ASID is bound to the SNP context, and that operation
-		 * will fail if RMP entries have already been setup that
-		 * reference the ASID being bound.
-		 *
-		 * Furthermore, pre-faulting must be skipped for any pages that
-		 * are to be part of the initial encrypted/measured guest state,
-		 * since those pages must initially be in a shared state in the
-		 * RMP table.
-		 */
-		if (private) {
-			/*
-			 * Make sure when pages are pre-faulted later after
-			 * finalization they are treated the same as a private
-			 * access by the guest and so that the expected gmem
-			 * backing pages are used.
-			 */
-			pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
-			vm_mem_set_private(vm, TEST_GPA, TEST_SIZE);
-			pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, true);
-		} else {
-			/* Shared pages can be pre-faulted any time. */
-			pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, true);
-		}
-
-		ret = snp_vm_launch_update(vm, KVM_SEV_SNP_PAGE_TYPE_NORMAL);
-		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_UPDATE, ret));
-
-		if (f_type == ALLOC_AFTER_SNP_LAUNCH_UPDATE ||
-		    f_type == ALLOC_DEALLOC_AFTER_SNP_LAUNCH_UPDATE) {
-			falloc_region(vm);
-		}
-
-		if (f_type == DEALLOC_AFTER_SNP_LAUNCH_UPDATE ||
-		    f_type == ALLOC_DEALLOC_AFTER_SNP_LAUNCH_UPDATE) {
-			falloc_hole_punch_region(vm);
-		}
-
-		ret = snp_vm_launch_finish(vm, 0);
-		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_FINISH, ret));
-
-		/*
-		 * After finalization, pre-faulting either private or shared
-		 * ranges should work regardless of whether the pages were
-		 * encrypted as part of setting up initial guest state.
-		 */
-		pre_fault_memory_private(vcpu, TEST_GPA, SZ_2M, 0);
-		pre_fault_memory_private(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-		pre_fault_memory_private(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
-
-		if (f_type == ALLOC_AFTER_SNP_LAUNCH_UPDATE ||
-		    f_type == ALLOC_DEALLOC_AFTER_SNP_LAUNCH_UPDATE) {
-			falloc_region(vm);
-		}
-
-		if (f_type == DEALLOC_AFTER_SNP_LAUNCH_UPDATE ||
-		    f_type == ALLOC_DEALLOC_AFTER_SNP_LAUNCH_UPDATE) {
-			falloc_hole_punch_region(vm);
-		}
-	} else {
-		uint32_t policy = (vm_type == KVM_X86_SEV_ES_VM) ? SEV_POLICY_ES : 0;
-		void *measurement;
-		int ret;
-
-		pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
-		pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-		pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
-
-		ret = sev_vm_launch_start(vm, policy);
-		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_START, ret));
-
-		pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
-		pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-		pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
-
-		ret = sev_vm_launch_update(vm, policy);
-		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_UPDATE_DATA, ret));
-
-		measurement = alloca(256);
-		ret = sev_vm_launch_measure(vm, measurement);
-		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_MEASURE, ret));
-
-		pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
-		pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-		pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
-
-		ret = sev_vm_launch_finish(vm);
-		TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_LAUNCH_FINISH, ret));
-
-		pre_fault_memory_shared(vcpu, TEST_GPA, SZ_2M, 0);
-		pre_fault_memory_shared(vcpu, TEST_GPA + SZ_2M, PAGE_SIZE * 2, PAGE_SIZE);
-		pre_fault_memory_shared(vcpu, TEST_GPA + TEST_SIZE, PAGE_SIZE, PAGE_SIZE);
-	}
+	if (vm_type == KVM_X86_SNP_VM)
+		pre_fault_memory_snp(vcpu, vm, private, f_type);
+	else
+		pre_fault_memory_sev(vm_type, vcpu, vm);
 
 	vcpu_run(vcpu);
 
