@@ -21,6 +21,17 @@ enum prefault_snp_test_type {
 	NO_PREFAULT_TYPE
 };
 
+enum falloc_snp_test_type {
+	ALLOC_BEFORE_LAUNCH_UPDATE = 0,
+	DEALLOC_BEFORE_LAUNCH_UPDATE,
+	ALLOC_DEALLOC_BEFORE_LAUNCH_UPDATE,
+	ALLOC_AFTER_LAUNCH_UPDATE,
+	DEALLOC_AFTER_LAUNCH_UPDATE,			/* Negative test */
+	ALLOC_DEALLOC_AFTER_LAUNCH_UPDATE,		/* Negative test */
+
+	NO_FALLOC_TYPE
+};
+
 static void guest_code_sev(void)
 {
 	volatile uint64_t val __used;
@@ -47,6 +58,29 @@ static void guest_code_sev(void)
 	}
 
 	GUEST_DONE();
+}
+
+static void __falloc_region(struct kvm_vm *vm, bool punch_hole)
+{
+	int ctr, ret, flags = FALLOC_FL_KEEP_SIZE;
+	struct userspace_mem_region *region;
+
+	hash_for_each(vm->regions.slot_hash, ctr, region, slot_node) {
+		if (punch_hole)
+			flags |= FALLOC_FL_PUNCH_HOLE;
+		ret = fallocate(region->region.guest_memfd, flags, 0, PAGE_SIZE * TEST_NPAGES);
+		TEST_ASSERT(!ret, "fallocate should succeed.");
+	}
+}
+
+static void falloc_region(struct kvm_vm *vm)
+{
+	__falloc_region(vm, false);
+}
+
+static void falloc_hole_punch_region(struct kvm_vm *vm)
+{
+	__falloc_region(vm, true);
 }
 
 static void __pre_fault_memory(struct kvm_vcpu *vcpu, u64 gpa, u64 size,
@@ -120,15 +154,36 @@ static void pre_fault_memory_negative(struct kvm_vcpu *vcpu, u64 gpa,
 }
 
 static void pre_fault_memory_snp(struct kvm_vcpu *vcpu, struct kvm_vm *vm,
-				 bool private, enum prefault_snp_test_type p_type)
+				 bool private, enum prefault_snp_test_type p_type,
+				 enum falloc_snp_test_type f_type)
 {
 	int ret;
+
+	if (f_type == ALLOC_BEFORE_LAUNCH_UPDATE ||
+	    f_type == ALLOC_DEALLOC_BEFORE_LAUNCH_UPDATE) {
+		falloc_region(vm);
+	}
+
+	if (f_type == DEALLOC_BEFORE_LAUNCH_UPDATE ||
+	    f_type == ALLOC_DEALLOC_BEFORE_LAUNCH_UPDATE) {
+		falloc_hole_punch_region(vm);
+	}
 
 	if (p_type == PREFAULT_SHARED_BEFORE_LAUNCH_FINISH)
 		pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
 
 	ret = snp_vm_launch(vm, SNP_POLICY, 0);
 	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_START, ret));
+
+	if (f_type == ALLOC_BEFORE_LAUNCH_UPDATE ||
+	    f_type == ALLOC_DEALLOC_BEFORE_LAUNCH_UPDATE) {
+		falloc_region(vm);
+	}
+
+	if (f_type == DEALLOC_BEFORE_LAUNCH_UPDATE ||
+	    f_type == ALLOC_DEALLOC_BEFORE_LAUNCH_UPDATE) {
+		falloc_hole_punch_region(vm);
+	}
 
 	if (p_type == PREFAULT_SHARED_BEFORE_LAUNCH_FINISH)
 		pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
@@ -162,12 +217,35 @@ static void pre_fault_memory_snp(struct kvm_vcpu *vcpu, struct kvm_vm *vm,
 	ret = snp_vm_launch_update(vm, KVM_SEV_SNP_PAGE_TYPE_NORMAL);
 	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_UPDATE, ret));
 
+	if (f_type == ALLOC_AFTER_LAUNCH_UPDATE ||
+	    f_type == ALLOC_DEALLOC_AFTER_LAUNCH_UPDATE) {
+		falloc_region(vm);
+	}
+
+	/*
+	 * HOLE punch after SNP LAUNCH UPDATE is not expected to fail
+	 * immediately, rather its affects are observed on vcpu_run()
+	 */
+	if (f_type == DEALLOC_AFTER_LAUNCH_UPDATE ||
+	    f_type == ALLOC_DEALLOC_AFTER_LAUNCH_UPDATE) {
+		falloc_hole_punch_region(vm);
+	}
+
 	if (p_type == PREFAULT_SHARED_BEFORE_LAUNCH_FINISH)
 		pre_fault_memory_negative(vcpu, TEST_GPA, SZ_2M, 0, false);
 
 	ret = snp_vm_launch_finish(vm, 0);
 	TEST_ASSERT(!ret, KVM_IOCTL_ERROR(KVM_SEV_SNP_LAUNCH_FINISH, ret));
 
+	if (f_type == ALLOC_AFTER_LAUNCH_UPDATE ||
+	    f_type == ALLOC_DEALLOC_AFTER_LAUNCH_UPDATE) {
+		falloc_region(vm);
+	}
+
+	if (f_type == DEALLOC_AFTER_LAUNCH_UPDATE ||
+	    f_type == ALLOC_DEALLOC_AFTER_LAUNCH_UPDATE) {
+		falloc_hole_punch_region(vm);
+	}
 	/*
 	* After finalization, pre-faulting either private or shared
 	* ranges should work regardless of whether the pages were
@@ -222,7 +300,8 @@ static void pre_fault_memory_sev(unsigned long vm_type, struct kvm_vcpu *vcpu,
 }
 
 static void test_pre_fault_memory_sev(unsigned long vm_type, bool private,
-				      enum prefault_snp_test_type p_type)
+				      enum prefault_snp_test_type p_type,
+				      enum falloc_snp_test_type f_type)
 {
 	struct kvm_vcpu *vcpu;
 	struct kvm_vm *vm;
@@ -258,11 +337,21 @@ static void test_pre_fault_memory_sev(unsigned long vm_type, bool private,
 	}
 
 	if (vm_type == KVM_X86_SNP_VM)
-		pre_fault_memory_snp(vcpu, vm, private, p_type);
+		pre_fault_memory_snp(vcpu, vm, private, p_type, f_type);
 	else
 		pre_fault_memory_sev(vm_type, vcpu, vm);
 
 	vcpu_run(vcpu);
+
+	/* Expect SHUTDOWN when we falloc using PUNCH_HOLE after SNP_UPDATE */
+	if (vm->type == KVM_X86_SNP_VM &&
+	    (f_type == DEALLOC_AFTER_LAUNCH_UPDATE ||
+	    f_type == ALLOC_DEALLOC_AFTER_LAUNCH_UPDATE)) {
+		TEST_ASSERT(vcpu->run->exit_reason == KVM_EXIT_SHUTDOWN,
+			    "Wanted SYSTEM_EVENT, got %s",
+			    exit_reason_str(vcpu->run->exit_reason));
+		goto out;
+	}
 
 	if (vm->type == KVM_X86_SEV_ES_VM || vm->type == KVM_X86_SNP_VM) {
 		TEST_ASSERT(vcpu->run->exit_reason == KVM_EXIT_SYSTEM_EVENT,
@@ -290,7 +379,7 @@ out:
 
 static void test_pre_fault_memory(unsigned long vm_type, bool private)
 {
-	int pt;
+	int pt, ft;
 
 	if (vm_type && !(kvm_check_cap(KVM_CAP_VM_TYPES) & BIT(vm_type))) {
 		pr_info("Skipping tests for vm_type 0x%lx\n", vm_type);
@@ -300,11 +389,14 @@ static void test_pre_fault_memory(unsigned long vm_type, bool private)
 	switch (vm_type) {
 	case KVM_X86_SEV_VM:
 	case KVM_X86_SEV_ES_VM:
-		test_pre_fault_memory_sev(vm_type, private, NO_PREFAULT_TYPE);
+		test_pre_fault_memory_sev(vm_type, private, NO_PREFAULT_TYPE, NO_FALLOC_TYPE);
 		break;
 	case KVM_X86_SNP_VM:
-		for (pt = 0; pt <= PREFAULT_PRIVATE_SHARED_AFTER_LAUNCH_FINISH; pt++)
-			test_pre_fault_memory_sev(vm_type, private, pt);
+		for (pt = 0; pt <= PREFAULT_PRIVATE_SHARED_AFTER_LAUNCH_FINISH; pt++) {
+			for (ft = 0; ft <= ALLOC_DEALLOC_AFTER_LAUNCH_UPDATE; ft++) {
+				test_pre_fault_memory_sev(vm_type, private, pt, ft);
+			}
+		}
 		break;
 	default:
 		abort();
