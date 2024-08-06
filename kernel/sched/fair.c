@@ -3256,6 +3256,9 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		return;
 
 	entry = kmalloc(sizeof(struct rq_entry), GFP_KERNEL);
+  if (!entry) {
+    printk (KERN_ERR "/fair.c 3260 kmalloc failed\n");
+  }
 	entry->cfs_rq_p = (u64) cfs_rq;
 	INIT_LIST_HEAD(&entry->list_node);
 
@@ -6513,6 +6516,10 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->pb_hist_idx = 0;
 	cfs_b->pb_runtime_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->pb_period_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
+  if (!cfs_b->pb_period_hist || !cfs_b->pb_runtime_hist) {
+    printk("<3>kamlloc failed at /fair.c 6520");
+    return;
+  }
 	cfs_b->pb_millicpu = 0;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
@@ -6541,6 +6548,9 @@ static void init_cfs_rq_runtime(struct cfs_rq *cfs_rq)
 	cfs_rq->reco_applied = false;
 	cfs_rq->pa_yield_time_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_rq->pa_runtime_hist = kmalloc(cfs_b->pa_recommender_history * sizeof(u64), GFP_KERNEL);
+  if (!cfs_rq->pa_yield_time_hist || !cfs_rq->pa_yield_time_hist) {
+    printk(KERN_ERR "/fair/c 6547 kmalloc failed\n");
+  }
 }
 
 void start_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
