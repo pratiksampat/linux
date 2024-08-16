@@ -5373,7 +5373,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 {
 	s64 corr_yeild_time, corr_runtime;
 	struct rq *rq = rq_of(cfs_rq);
-	u64 min_amount, amount = 0, curr_yeild_time;
+	u64 min_amount, amount = 0, curr_yeild_time = 0;
 	bool legitimate_yeild = false;
 	struct rq_entry *entry;
 	int percentile_idx, num_rqs = 0;
@@ -5432,6 +5432,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	   amount it has already run for
 	*/
 	corr_yeild_time = curr_yeild_time - cfs_rq->prev_runtime_amount;
+	cfs_rq->runtime_start += corr_yeild_time;
 
 	// trace_printk("[DEBUG] cfs_rq: 0x%llx curr_yeild: %lld corr_yeild: %lld target_runtime:%llu\n",
 		//     (u64) cfs_rq, curr_yeild_time, corr_yeild_time, target_runtime);
@@ -5440,7 +5441,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	if (curr_yeild_time && cfs_rq->runtime_start &&
 	    corr_yeild_time > (s64) target_runtime) {
 		cfs_rq->pa_yield_time_hist[cfs_rq->pa_hist_idx] = corr_yeild_time;
-		corr_runtime = rq_clock(rq) - cfs_rq->runtime_start - corr_yeild_time;
+		corr_runtime = rq_clock(rq) - cfs_rq->runtime_start;
 		if (corr_runtime < 0)
 			goto reset_runtime;
 
