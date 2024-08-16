@@ -5453,7 +5453,7 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			     (u64) cfs_rq, corr_yeild_time, corr_runtime);
 #endif
 		/* Wrap around array index */
-		cfs_rq->pa_hist_idx %= ((cfs_b->pa_recommender_history) + 1);
+		cfs_rq->pa_hist_idx %= cfs_b->pa_recommender_history;
 reset_runtime:
 		cfs_rq->runtime_start = 0;
 		legitimate_yeild = true;
@@ -5472,7 +5472,7 @@ reset_runtime:
 	cfs_rq->prev_runtime_amount = amount;
 
 	/* Recommendation */
-	if (cfs_rq->pa_hist_idx < cfs_b->pa_recommender_history || !legitimate_yeild)
+	if (cfs_rq->pa_hist_idx < cfs_b->pa_recommender_history - 1 || !legitimate_yeild)
 		goto assign_out;
 
 	cfs_b->pa_recommender_quota = 0;
@@ -5486,12 +5486,12 @@ reset_runtime:
 		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
 
 		/* Find 99P of yeild and runtime for each runqueue maybe add it back to the queue itself */
-		if (temp_cfs_rq->pa_hist_idx - 1 <= 0)
+		if (temp_cfs_rq->pa_hist_idx<= 0)
 			continue;
-		sort(temp_cfs_rq->pa_yield_time_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
-		sort(temp_cfs_rq->pa_runtime_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+		sort(temp_cfs_rq->pa_yield_time_hist, temp_cfs_rq->pa_hist_idx, sizeof(u64), cmp_u64, NULL);
+		sort(temp_cfs_rq->pa_runtime_hist, temp_cfs_rq->pa_hist_idx, sizeof(u64), cmp_u64, NULL);
 
-		percentile_idx = DIV_ROUND_UP(99 * (temp_cfs_rq->pa_hist_idx - 2), 100);
+		percentile_idx = DIV_ROUND_UP(99 * (temp_cfs_rq->pa_hist_idx - 1), 100);
 		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
 		temp_cfs_rq->P95_yield_time = temp_cfs_rq->pa_yield_time_hist[percentile_idx];
 
