@@ -11393,6 +11393,7 @@ static int cpu_cfs_pa_recommend_history_write_s64(struct cgroup_subsys_state *cs
 		temp_pa_yield_time_hist = krealloc(temp_cfs_rq->pa_yield_time_hist, history * sizeof(u64), GFP_KERNEL);
 
 		if (!temp_pa_runtime_hist || !temp_pa_yield_time_hist) {
+			rcu_read_unlock();
 			return -ENOMEM;
 		} else {
 			temp_cfs_rq->pa_yield_time_hist = temp_pa_yield_time_hist;
