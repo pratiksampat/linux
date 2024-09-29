@@ -5446,8 +5446,6 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 			goto reset_runtime;
 
 		cfs_rq->pa_runtime_hist[cfs_rq->pa_hist_idx] = corr_runtime;
-		cfs_rq->pa_hist_idx++;
-
 #if 0
 		trace_printk("[ASSIGN] cfs_rq: 0x%llx yeild_time:%llu runtime:%llu\n",
 			     (u64) cfs_rq, corr_yeild_time, corr_runtime);
@@ -6174,9 +6172,11 @@ period_timer_out:
 
 		if (cfs_b->curr_interval < 10) {
 			cfs_b->recommender_active = false;
+			if (throttled && cfs_b->curr_interval > 1)
+				cfs_b->max_ratio = min((unsigned long long)num_online_cpus() * 100000, cfs_b->max_ratio * 2);
 			if (cfs_b->recommender_status == 2) {
 				cfs_b->period = ns_to_ktime(default_cfs_period());
-				cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
+				cfs_b->quota = cfs_b->period * cfs_b->max_ratio / 100000;
 			}
 			trace_printk("[ULIM] quota: %llu period: %llu curr_interval:%d\n",
 					cfs_b->quota, cfs_b->period, cfs_b->curr_interval);
@@ -6515,6 +6515,7 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->pb_runtime_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->pb_period_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->pb_millicpu = 0;
+	cfs_b->max_ratio = 100000;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	INIT_LIST_HEAD(&cfs_b->current_rq_list);
