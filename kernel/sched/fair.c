@@ -6567,6 +6567,8 @@ static void destroy_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 
 	hrtimer_cancel(&cfs_b->period_timer);
 	hrtimer_cancel(&cfs_b->slack_timer);
+	kfree(cfs_b->pb_runtime_hist);
+	kfree(cfs_b->pb_period_hist);
 
 	/*
 	 * It is possible that we still have some cfs_rq's pending on a CSD
@@ -12847,8 +12849,11 @@ void free_fair_sched_group(struct task_group *tg)
 	int i;
 
 	for_each_possible_cpu(i) {
-		if (tg->cfs_rq)
+		if (tg->cfs_rq) {
+			kfree(tg->cfs_rq[i]->pa_runtime_hist);
+			kfree(tg->cfs_rq[i]->pa_yield_time_hist);
 			kfree(tg->cfs_rq[i]);
+		}
 		if (tg->se)
 			kfree(tg->se[i]);
 	}
