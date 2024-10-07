@@ -5439,20 +5439,19 @@ static int __assign_cfs_rq_runtime(struct cfs_bandwidth *cfs_b,
 	/* Found a legitimate self-yeild */
 	if (curr_yeild_time && cfs_rq->runtime_start &&
 	    corr_yeild_time > (s64) target_runtime) {
+		cfs_rq->pa_hist_idx %= cfs_b->pa_recommender_history;
 		cfs_rq->pa_yield_time_hist[cfs_rq->pa_hist_idx] = corr_yeild_time;
 		corr_runtime = rq_clock(rq) - cfs_rq->runtime_start - corr_yeild_time;
 		if (corr_runtime < 0)
 			goto reset_runtime;
 
 		cfs_rq->pa_runtime_hist[cfs_rq->pa_hist_idx] = corr_runtime;
-		cfs_rq->pa_hist_idx++;
-
 #if 0
 		trace_printk("[ASSIGN] cfs_rq: 0x%llx yeild_time:%llu runtime:%llu\n",
 			     (u64) cfs_rq, corr_yeild_time, corr_runtime);
 #endif
 		/* Wrap around array index */
-		cfs_rq->pa_hist_idx %= ((cfs_b->pa_recommender_history) + 1);
+		cfs_rq->pa_hist_idx++;
 reset_runtime:
 		cfs_rq->runtime_start = 0;
 		legitimate_yeild = true;
@@ -5485,10 +5484,10 @@ reset_runtime:
 		struct cfs_rq *temp_cfs_rq = (struct cfs_rq *) entry->cfs_rq_p;
 
 		/* Find 99P of yeild and runtime for each runqueue maybe add it back to the queue itself */
-		if (temp_cfs_rq->pa_hist_idx - 1 <= 0)
+		if (temp_cfs_rq->pa_hist_idx <= 0)
 			continue;
-		sort(temp_cfs_rq->pa_yield_time_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
-		sort(temp_cfs_rq->pa_runtime_hist, temp_cfs_rq->pa_hist_idx - 1, sizeof(u64), cmp_u64, NULL);
+		sort(temp_cfs_rq->pa_yield_time_hist, temp_cfs_rq->pa_hist_idx , sizeof(u64), cmp_u64, NULL);
+		sort(temp_cfs_rq->pa_runtime_hist, temp_cfs_rq->pa_hist_idx , sizeof(u64), cmp_u64, NULL);
 
 		percentile_idx = DIV_ROUND_UP(99 * (temp_cfs_rq->pa_hist_idx - 2), 100);
 		temp_cfs_rq->P95_runtime = temp_cfs_rq->pa_runtime_hist[percentile_idx];
@@ -6173,9 +6172,11 @@ period_timer_out:
 
 		if (cfs_b->curr_interval < 10) {
 			cfs_b->recommender_active = false;
+			if (throttled && cfs_b->curr_interval > 1)
+				cfs_b->max_ratio = min((unsigned long long)num_online_cpus() * 100000, cfs_b->max_ratio * 2);
 			if (cfs_b->recommender_status == 2) {
 				cfs_b->period = ns_to_ktime(default_cfs_period());
-				cfs_b->quota = ns_to_ktime(num_online_cpus() * default_cfs_period());
+				cfs_b->quota = cfs_b->period * cfs_b->max_ratio / 100000;
 			}
 			trace_printk("[ULIM] quota: %llu period: %llu curr_interval:%d\n",
 					cfs_b->quota, cfs_b->period, cfs_b->curr_interval);
@@ -6514,6 +6515,7 @@ void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 	cfs_b->pb_runtime_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->pb_period_hist = kmalloc(cfs_b->pb_recommender_history * sizeof(u64), GFP_KERNEL);
 	cfs_b->pb_millicpu = 0;
+	cfs_b->max_ratio = 100000;
 
 	INIT_LIST_HEAD(&cfs_b->throttled_cfs_rq);
 	INIT_LIST_HEAD(&cfs_b->current_rq_list);
@@ -6565,6 +6567,8 @@ static void destroy_cfs_bandwidth(struct cfs_bandwidth *cfs_b)
 
 	hrtimer_cancel(&cfs_b->period_timer);
 	hrtimer_cancel(&cfs_b->slack_timer);
+	kfree(cfs_b->pb_runtime_hist);
+	kfree(cfs_b->pb_period_hist);
 
 	/*
 	 * It is possible that we still have some cfs_rq's pending on a CSD
@@ -12845,8 +12849,11 @@ void free_fair_sched_group(struct task_group *tg)
 	int i;
 
 	for_each_possible_cpu(i) {
-		if (tg->cfs_rq)
+		if (tg->cfs_rq) {
+			kfree(tg->cfs_rq[i]->pa_runtime_hist);
+			kfree(tg->cfs_rq[i]->pa_yield_time_hist);
 			kfree(tg->cfs_rq[i]);
+		}
 		if (tg->se)
 			kfree(tg->se[i]);
 	}
