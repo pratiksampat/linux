@@ -2263,6 +2263,13 @@ static int try_remove_memory(u64 start, u64 size)
 
 	mem_hotplug_begin();
 
+	/*
+	 * Return any pages that were lazily accepted for this range to the
+	 * shared state so the hypervisor can reclaim them (a no-op on systems
+	 * without unaccepted memory).
+	 */
+	unaccept_hotplug_memory(start, size);
+
 	rc = memory_blocks_have_altmaps(start, size);
 	if (rc < 0) {
 		mem_hotplug_done();

@@ -258,6 +258,67 @@ void process_unaccepted_memory(u64 start, u64 end)
 	spin_unlock_irqrestore(&unaccepted_memory_lock, flags);
 }
 
+/*
+ * unaccept_hotplug_memory() -- Reverse acceptance of a hot-removed range.
+ *
+ * Counterpart to process_unaccepted_memory(). When a range is hot-removed, any
+ * units that were lazily accepted (made private) must be transitioned back to
+ * the shared state so the hypervisor can reclaim them; re-adding the memory
+ * later requires re-accepting it across the trust boundary.
+ *
+ * In the bitmap a set bit means "unaccepted": such units were never accepted
+ * and need no action. A clear bit means the unit was accepted, so unaccept it
+ * and mark it unaccepted again to leave the window in a consistent state.
+ */
+void unaccept_hotplug_memory(phys_addr_t start, unsigned long size)
+{
+	unsigned long range_start, range_end, bitrange_end;
+	struct efi_unaccepted_memory *unaccepted;
+	phys_addr_t end = start + size;
+	unsigned long flags;
+	u64 unit_size;
+
+	unaccepted = efi_get_unaccepted_table();
+	if (!unaccepted)
+		return;
+
+	unit_size = unaccepted->unit_size;
+
+	if (WARN_ON_ONCE(!IS_ALIGNED(start, unit_size) ||
+			 !IS_ALIGNED(end, unit_size)))
+		return;
+
+	if (WARN_ON_ONCE(start < unaccepted->phys_base ||
+			 end > unaccepted->phys_base +
+			       unaccepted->size * unit_size * BITS_PER_BYTE))
+		return;
+
+	/* Translate to offsets from the beginning of the bitmap */
+	start -= unaccepted->phys_base;
+	end -= unaccepted->phys_base;
+
+	range_start = start / unit_size;
+	bitrange_end = DIV_ROUND_UP(end, unit_size);
+
+	/*
+	 * Only the units that were accepted (clear bits) need to be returned to
+	 * the shared state. Mark them unaccepted again as they are reversed.
+	 */
+	spin_lock_irqsave(&unaccepted_memory_lock, flags);
+	for_each_clear_bitrange_from(range_start, range_end, unaccepted->bitmap,
+				     bitrange_end) {
+		unsigned long phys_start, phys_end;
+		unsigned long len = range_end - range_start;
+
+		phys_start = range_start * unit_size + unaccepted->phys_base;
+		phys_end = range_end * unit_size + unaccepted->phys_base;
+
+		arch_unaccept_memory(phys_start, phys_end);
+		bitmap_set(unaccepted->bitmap, range_start, len);
+	}
+	spin_unlock_irqrestore(&unaccepted_memory_lock, flags);
+}
+
 #ifdef CONFIG_PROC_VMCORE
 static bool unaccepted_memory_vmcore_pfn_is_ram(struct vmcore_cb *cb,
 						unsigned long pfn)
