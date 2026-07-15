@@ -215,6 +215,49 @@ bool range_contains_unaccepted_memory(phys_addr_t start, unsigned long size)
 	return ret;
 }
 
+/*
+ * process_unaccepted_memory() -- Record a hot-added range in the bitmap.
+ *
+ * When memory is hot-added to a CoCo guest it arrives unaccepted and must be
+ * tracked so it can be accepted lazily. Mark the range as unaccepted in the
+ * bitmap rather than accepting it all up front.
+ */
+void process_unaccepted_memory(u64 start, u64 end)
+{
+	struct efi_unaccepted_memory *unaccepted;
+	unsigned long flags;
+	u64 unit_size;
+
+	unaccepted = efi_get_unaccepted_table();
+	if (!unaccepted)
+		return;
+
+	unit_size = unaccepted->unit_size;
+
+	if (WARN_ON_ONCE(!IS_ALIGNED(start, unit_size) ||
+			 !IS_ALIGNED(end, unit_size)))
+		return;
+
+	if (WARN_ON_ONCE(start < unaccepted->phys_base ||
+			 end > unaccepted->phys_base +
+			       unaccepted->size * unit_size * BITS_PER_BYTE))
+		return;
+
+	/* Translate to offsets from the beginning of the bitmap */
+	start -= unaccepted->phys_base;
+	end -= unaccepted->phys_base;
+
+	/*
+	 * Record the range as being unaccepted. The bitmap is shared with
+	 * accept_memory() and range_contains_unaccepted_memory(), so it must be
+	 * updated under the lock.
+	 */
+	spin_lock_irqsave(&unaccepted_memory_lock, flags);
+	bitmap_set(unaccepted->bitmap,
+		   start / unit_size, (end - start) / unit_size);
+	spin_unlock_irqrestore(&unaccepted_memory_lock, flags);
+}
+
 #ifdef CONFIG_PROC_VMCORE
 static bool unaccepted_memory_vmcore_pfn_is_ram(struct vmcore_cb *cb,
 						unsigned long pfn)

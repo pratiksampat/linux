@@ -76,6 +76,9 @@ efi_status_t allocate_unaccepted_bitmap(__u32 nr_desc,
 	unaccepted_table->size = bitmap_size;
 	memset(unaccepted_table->bitmap, 0, bitmap_size);
 
+	efi_info("unaccepted_table->phys_base: %llx unaccepted_table->size: %lld\n",
+		unaccepted_table->phys_base, unaccepted_table->size);
+
 	status = efi_bs_call(install_configuration_table,
 			     &unaccepted_table_guid, unaccepted_table);
 	if (status != EFI_SUCCESS) {

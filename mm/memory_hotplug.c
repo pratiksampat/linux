@@ -1568,6 +1568,12 @@ int add_memory_resource(int nid, struct resource *res, mhp_t mhp_flags)
 	if (!strcmp(res->name, "System RAM"))
 		firmware_map_add_hotplug(start, start + size, "System RAM");
 
+	/*
+	 * Record the hot-added range in the unaccepted memory bitmap so the
+	 * pages can be accepted lazily instead of being accepted up front.
+	 */
+	process_unaccepted_memory(start, start + size);
+
 	/* device_online() will take the lock when calling online_pages() */
 	mem_hotplug_done();
 

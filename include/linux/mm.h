@@ -5113,6 +5113,7 @@ int set_anon_vma_name(unsigned long addr, unsigned long size,
 
 bool range_contains_unaccepted_memory(phys_addr_t start, unsigned long size);
 void accept_memory(phys_addr_t start, unsigned long size);
+void process_unaccepted_memory(u64 start, u64 end);
 
 #else
 
@@ -5123,6 +5124,10 @@ static inline bool range_contains_unaccepted_memory(phys_addr_t start,
 }
 
 static inline void accept_memory(phys_addr_t start, unsigned long size)
+{
+}
+
+static inline void process_unaccepted_memory(u64 start, u64 end)
 {
 }
 

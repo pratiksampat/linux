@@ -630,7 +630,8 @@ setup_e820(struct boot_params *params, struct setup_data *e820ext, u32 e820ext_s
 			break;
 
 		case EFI_UNACCEPTED_MEMORY:
-			if (!IS_ENABLED(CONFIG_UNACCEPTED_MEMORY))
+			if (!IS_ENABLED(CONFIG_UNACCEPTED_MEMORY) ||
+			    d->attribute == EFI_MEMORY_UNACCEPTED_HOT_PLUGGABLE)
 				continue;
 			e820_type = E820_TYPE_RAM;
 			process_unaccepted_memory(d->phys_addr,

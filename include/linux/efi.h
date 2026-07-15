@@ -128,6 +128,7 @@ typedef	struct {
 #define EFI_MEMORY_SP			BIT_ULL(18)	/* soft reserved */
 #define EFI_MEMORY_CPU_CRYPTO		BIT_ULL(19)	/* supports encryption */
 #define EFI_MEMORY_HOT_PLUGGABLE	BIT_ULL(20)	/* supports unplugging at runtime */
+#define EFI_MEMORY_UNACCEPTED_HOT_PLUGGABLE	BIT_ULL(21)	/* supports unplugging at runtime */
 #define EFI_MEMORY_RUNTIME		BIT_ULL(63)	/* range requires runtime mapping */
 
 #define EFI_MEMORY_DESCRIPTOR_VERSION	1
